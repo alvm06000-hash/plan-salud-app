@@ -1,0 +1,6 @@
+{
+  "appId": "com.tuempresa.plansalud",
+  "appName": "Mi Plan de Salud",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
