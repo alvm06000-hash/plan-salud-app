@@ -295,4 +295,4 @@ export default function PlanSalud() {
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                  <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: 0, color: "#1E3F35" }}>Medicamentos</h
+                  <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: 0, color: "#1E3F35" }}>Medicamentos</h2>
