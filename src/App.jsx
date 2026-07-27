@@ -46,9 +46,7 @@ export default function PlanSalud() {
           setDatos(JSON.parse(res.value));
           setVista("horario");
         }
-      } catch (e) {
-        // no hay datos previos guardados, es normal
-      }
+      } catch (e) {}
     })();
   }, []);
 
@@ -387,4 +385,4 @@ export default function PlanSalud() {
       </main>
     </div>
   );
-                                                      }
+              }
