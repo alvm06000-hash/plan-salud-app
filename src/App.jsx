@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Preferences } from "@capacitor/preferences";
 import { Upload, Loader2, Pill, CalendarClock, AlertCircle, Plus, Trash2, Clock, Stethoscope, X } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://backend-production-10333.up.railway.app/api/leer-receta";
+const API_URL = "https://plan-salud-server-production.up.railway.app/api/leer-receta";
 
 const MOMENTOS = [
   { id: "manana", label: "Mañana", sub: "6:00–11:59" },
