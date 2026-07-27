@@ -296,3 +296,95 @@ export default function PlanSalud() {
 
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: 0, color: "#1E3F35" }}>Medicamentos</h2>
+                  <button onClick={agregarMedManual} style={{ background: "none", border: "none", color: "#B87333", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                    <Plus size={14} /> Agregar
+                  </button>
+                </div>
+
+                {(datos.medicamentos || []).map((m) => (
+                  <div key={m.id} style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: colorPara(m.nombre), marginTop: 5, flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        {medEditando === m.id ? (
+                          <input
+                            value={m.nombre}
+                            onChange={(e) => actualizarCampoMed(m.id, "nombre", e.target.value)}
+                            onBlur={() => setMedEditando(null)}
+                            autoFocus
+                            style={{ fontWeight: 600, fontSize: 15, border: "1px solid #B87333", borderRadius: 6, padding: "4px 8px", width: "100%" }}
+                          />
+                        ) : (
+                          <div onClick={() => setMedEditando(m.id)} style={{ fontWeight: 600, fontSize: 15, color: "#1E3F35" }}>
+                            {m.nombre}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 13, color: "#6B7A70", marginTop: 2 }}>
+                          {m.dosis || "sin dosis especificada"}
+                          {m.duracion_dias ? ` · ${m.duracion_dias} días` : ""}
+                        </div>
+                        {m.indicaciones && (
+                          <div style={{ fontSize: 12, color: "#8A9A90", marginTop: 2, fontStyle: "italic" }}>{m.indicaciones}</div>
+                        )}
+                        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                          {MOMENTOS.map((mo) => {
+                            const activo = m.momentos.includes(mo.id);
+                            return (
+                              <button
+                                key={mo.id}
+                                onClick={() => toggleMomento(m.id, mo.id)}
+                                style={{
+                                  fontSize: 11,
+                                  padding: "4px 10px",
+                                  borderRadius: 14,
+                                  border: `1px solid ${activo ? "#1E3F35" : "#D8D2BC"}`,
+                                  background: activo ? "#1E3F35" : "transparent",
+                                  color: activo ? "#F1EEE4" : "#8A9A90",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {mo.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <button onClick={() => eliminarMed(m.id)} style={{ background: "none", border: "none", color: "#C4915C", padding: 4 }}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {datos.citas && datos.citas.length > 0 && (
+                  <>
+                    <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: "20px 0 10px", color: "#1E3F35" }}>Próximas citas</h2>
+                    {datos.citas.map((c) => (
+                      <div key={c.id} style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 12, padding: 14, marginBottom: 10, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <CalendarClock size={18} color="#B87333" style={{ marginTop: 2, flexShrink: 0 }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: "#1E3F35" }}>{c.motivo || "Consulta"}</div>
+                          <div style={{ fontSize: 12, color: "#6B7A70", marginTop: 2 }}>
+                            {[c.fecha, c.hora, c.lugar].filter(Boolean).join(" · ") || "Sin datos"}
+                          </div>
+                        </div>
+                        <button onClick={() => eliminarCita(c.id)} style={{ background: "none", border: "none", color: "#C4915C" }}>
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                <div style={{ marginTop: 24, padding: 14, background: "#EFE8D8", borderRadius: 10, fontSize: 12.5, color: "#5B6B60", display: "flex", gap: 8 }}>
+                  <Clock size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>Este pastillero es una guía visual, no reemplaza la indicación médica ni farmacéutica.</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+                                                      }
