@@ -33,16 +33,38 @@ jobs:
 
       - name: Habilitar alarmas exactas en Android
         run: |
-          python - <<'PY2'
+          python - <<'PY'
           from pathlib import Path
+          import re
+
           manifest = Path("android/app/src/main/AndroidManifest.xml")
-          text = manifest.read_text()
-          permission = '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
+          text = manifest.read_text(encoding="utf-8")
+
+          permission = (
+              '<uses-permission '
+              'android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
+          )
+
           if permission not in text:
-              text = text.replace("<manifest", "<manifest", 1)
-              pos = text.find(">") + 1
-              text = text[:pos] + "\n    " + permission + text[pos:]
-              manifest.write_text(text)
+              match = re.search(r"<manifest\b[^>]*>", text)
+
+              if not match:
+                  raise RuntimeError(
+                      "No se encontró la etiqueta <manifest>"
+                  )
+
+              position = match.end()
+              text = text[:position] + "\n    " + permission + text[position:]
+              manifest.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Compilar APK de prueba (debug, sin firmar)
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      
           PY2
 
       - name: Compilar APK de prueba (debug, sin firmar)
