@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Preferences } from "@capacitor/preferences";
-import { Upload, Loader2, Pill, CalendarClock, AlertCircle, Plus, Trash2, Clock, Stethoscope, X } from "lucide-react";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import { Capacitor } from "@capacitor/core";
+import { Upload, Loader2, Pill, CalendarClock, AlertCircle, Plus, Trash2, Clock, Stethoscope, X, BellRing, ExternalLink } from "lucide-react";
 
 const API_URL = "https://plan-salud-server-production.up.railway.app/api/leer-receta";
 
@@ -13,6 +15,30 @@ const MOMENTOS = [
 const DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
 const PALETA = ["#1E3F35", "#B87333", "#5B7B6F", "#8A5A3B", "#3D6B5E", "#C4915C"];
+const HORAS_MOMENTO = {
+  manana: { hora: 8, minuto: 0, label: "08:00" },
+  tarde: { hora: 14, minuto: 0, label: "14:00" },
+  noche: { hora: 20, minuto: 0, label: "20:00" },
+};
+
+function hashId(texto) {
+  let hash = 0;
+  for (let i = 0; i < texto.length; i++) hash = ((hash << 5) - hash + texto.charCodeAt(i)) | 0;
+  return Math.abs(hash) % 2000000000 + 1;
+}
+
+function siguienteFecha(hora, minuto, diasAdelante = 0) {
+  const fecha = new Date();
+  fecha.setDate(fecha.getDate() + diasAdelante);
+  fecha.setHours(hora, minuto, 0, 0);
+  if (diasAdelante === 0 && fecha.getTime() <= Date.now()) fecha.setDate(fecha.getDate() + 1);
+  return fecha;
+}
+
+function fechaGoogle(fecha) {
+  return fecha.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
 
 function colorPara(nombre) {
   let h = 0;
@@ -36,6 +62,7 @@ export default function PlanSalud() {
   const [datos, setDatos] = useState(null);
   const [vista, setVista] = useState("subir");
   const [medEditando, setMedEditando] = useState(null);
+  const [avisoAlarmas, setAvisoAlarmas] = useState(null);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -141,6 +168,75 @@ export default function PlanSalud() {
     const nuevosDatos = { ...datos, citas: datos.citas.filter((c) => c.id !== citaId) };
     guardar(nuevosDatos);
   }
+  function abrirGoogleCalendar(med, momentoId) {
+    const horario = HORAS_MOMENTO[momentoId];
+    const inicio = siguienteFecha(horario.hora, horario.minuto);
+    const fin = new Date(inicio.getTime() + 15 * 60 * 1000);
+    const cantidad = Math.max(1, Math.min(Number(med.duracion_dias) || 30, 365));
+    const params = new URLSearchParams({
+      action: "TEMPLATE",
+      text: `Tomar ${med.nombre}`,
+      dates: `${fechaGoogle(inicio)}/${fechaGoogle(fin)}`,
+      details: [med.dosis, med.indicaciones, "Recordatorio creado desde Mi Plan de Salud"].filter(Boolean).join("\n"),
+      recur: `RRULE:FREQ=DAILY;COUNT=${cantidad}`,
+    });
+    window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, "_blank");
+  }
+
+  async function programarAlarmas() {
+    if (!datos?.medicamentos?.length) {
+      setAvisoAlarmas({ tipo: "error", texto: "Agregá al menos un medicamento antes de activar las alarmas." });
+      return;
+    }
+
+    if (!Capacitor.isNativePlatform()) {
+      setAvisoAlarmas({ tipo: "error", texto: "Las alarmas locales funcionan en la APK instalada, no en la vista web." });
+      return;
+    }
+
+    try {
+      const permiso = await LocalNotifications.requestPermissions();
+      if (permiso.display !== "granted") {
+        setAvisoAlarmas({ tipo: "error", texto: "Android no concedió permiso para mostrar notificaciones." });
+        return;
+      }
+
+      const anteriores = await Preferences.get({ key: "plan-salud:notificaciones" });
+      const idsAnteriores = anteriores.value ? JSON.parse(anteriores.value) : [];
+      if (idsAnteriores.length) {
+        await LocalNotifications.cancel({ notifications: idsAnteriores.map((id) => ({ id })) });
+      }
+
+      const notificaciones = [];
+      for (const med of datos.medicamentos) {
+        const dias = Math.max(1, Math.min(Number(med.duracion_dias) || 7, 30));
+        for (const momentoId of med.momentos || []) {
+          const horario = HORAS_MOMENTO[momentoId];
+          if (!horario) continue;
+          for (let dia = 0; dia < dias; dia++) {
+            const at = siguienteFecha(horario.hora, horario.minuto, dia);
+            const id = hashId(`${med.id}-${momentoId}-${at.toISOString().slice(0, 10)}`);
+            notificaciones.push({
+              id,
+              title: `Hora de tomar ${med.nombre}`,
+              body: [med.dosis, med.indicaciones].filter(Boolean).join(" · ") || `Toma programada para las ${horario.label}`,
+              schedule: { at, allowWhileIdle: true },
+              extra: { medicamentoId: med.id, momento: momentoId },
+            });
+          }
+        }
+      }
+
+      if (!notificaciones.length) throw new Error("No hay horarios seleccionados");
+      await LocalNotifications.schedule({ notifications: notificaciones });
+      await Preferences.set({ key: "plan-salud:notificaciones", value: JSON.stringify(notificaciones.map((n) => n.id)) });
+      setAvisoAlarmas({ tipo: "ok", texto: `${notificaciones.length} alarmas programadas. Android las mostrará aunque la aplicación esté cerrada.` });
+    } catch (e) {
+      console.error("No se pudieron programar las alarmas", e);
+      setAvisoAlarmas({ tipo: "error", texto: "No se pudieron programar las alarmas. Revisá los permisos de notificaciones y batería de la aplicación." });
+    }
+  }
+
 
   return (
     <div style={{ fontFamily: "'IBM Plex Sans', ui-sans-serif, system-ui", background: "#F1EEE4", minHeight: "100vh", color: "#1C2B24" }}>
@@ -292,6 +388,20 @@ export default function PlanSalud() {
                   </div>
                 </div>
 
+                <div style={{ background: "#FFF7E8", border: "1px solid #D9B98C", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <BellRing size={20} color="#B87333" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>Alarmas del teléfono</div>
+                      <div style={{ fontSize: 12, color: "#6B7A70", marginTop: 3 }}>Mañana 08:00 · Tarde 14:00 · Noche 20:00. Podés reprogramarlas después de editar el horario.</div>
+                      <button onClick={programarAlarmas} style={{ marginTop: 10, width: "100%", padding: "10px 12px", borderRadius: 9, border: "none", background: "#B87333", color: "white", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                        <BellRing size={16} /> Activar o actualizar alarmas
+                      </button>
+                      {avisoAlarmas && <div style={{ marginTop: 8, fontSize: 12, color: avisoAlarmas.tipo === "ok" ? "#276749" : "#9C4A2E" }}>{avisoAlarmas.texto}</div>}
+                    </div>
+                  </div>
+                </div>
+
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 18, margin: 0, color: "#1E3F35" }}>Medicamentos</h2>
                   <button onClick={agregarMedManual} style={{ background: "none", border: "none", color: "#B87333", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
@@ -345,6 +455,13 @@ export default function PlanSalud() {
                               </button>
                             );
                           })}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                          {(m.momentos || []).map((momentoId) => (
+                            <button key={`cal-${momentoId}`} onClick={() => abrirGoogleCalendar(m, momentoId)} style={{ fontSize: 10.5, padding: "5px 8px", borderRadius: 8, border: "1px solid #B87333", background: "transparent", color: "#8A5A3B", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                              <ExternalLink size={12} /> Google Calendar · {HORAS_MOMENTO[momentoId]?.label}
+                            </button>
+                          ))}
                         </div>
                       </div>
                       <button onClick={() => eliminarMed(m.id)} style={{ background: "none", border: "none", color: "#C4915C", padding: 4 }}>
