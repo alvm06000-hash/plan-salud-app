@@ -364,16 +364,57 @@ export default function PlanSalud() {
         throw new Error("No hay horarios seleccionados");
       }
 
-      await LocalNotifications.schedule({ notifications: notificaciones });
+      // En Android se crea un canal con sonido y prioridad alta.
+      await LocalNotifications.createChannel({
+        id: "recordatorios-medicamentos",
+        name: "Recordatorios de medicamentos",
+        description: "Avisos para tomar los medicamentos programados",
+        importance: 5,
+        visibility: 1,
+        vibration: true,
+        sound: "default",
+      });
+
+      // Esta notificación permite comprobar el funcionamiento sin esperar
+      // hasta las 08:00, 14:00 o 20:00.
+      const notificacionPrueba = {
+        id: 2147483000,
+        title: "Prueba de Mi Plan de Salud",
+        body: "Si recibes este mensaje, las alarmas locales funcionan correctamente.",
+        channelId: "recordatorios-medicamentos",
+        schedule: {
+          at: new Date(Date.now() + 10000),
+          allowWhileIdle: true,
+        },
+        sound: "default",
+        extra: {
+          tipo: "prueba",
+        },
+      };
+
+      const notificacionesConCanal = notificaciones.map((notificacion) => ({
+        ...notificacion,
+        channelId: "recordatorios-medicamentos",
+        sound: "default",
+      }));
+
+      await LocalNotifications.schedule({
+        notifications: [notificacionPrueba, ...notificacionesConCanal],
+      });
 
       await Preferences.set({
         key: "plan-salud:notificaciones",
-        value: JSON.stringify(notificaciones.map((n) => n.id)),
+        value: JSON.stringify([
+          notificacionPrueba.id,
+          ...notificacionesConCanal.map((n) => n.id),
+        ]),
       });
 
       setAvisoAlarmas({
         tipo: "ok",
-        texto: `${notificaciones.length} alarmas locales programadas en el teléfono.`,
+        texto:
+          `${notificacionesConCanal.length} alarmas programadas. ` +
+          "Recibirás una notificación de prueba en 10 segundos.",
       });
       setMostrarOpcionesAlarmas(false);
     } catch (e) {
