@@ -43,7 +43,7 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          manifest = Path("android/app/src/main/AndroidManifest.    xml")
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
           texto = manifest.read_text(encoding="utf-8")
 
           permisos = [
@@ -51,24 +51,36 @@ jobs:
               '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />',
               '<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />',
               '<uses-permission android:name="android.permission.VIBRATE" />',
-             ]
+          ]
 
-           faltantes = [permiso for permiso in permisos if permiso not in texto]
+          faltantes = [
+              permiso
+              for permiso in permisos
+              if permiso not in texto
+          ]
 
-           if faltantes:
-               posicion = texto.find(">") + 1
-               texto = (
-                   texto[:posicion]
-                   + "\n    "
-                   + "\n    ".join(faltantes)
-                   + "\n"
-                   + texto[posicion:]
-                    )
+          if faltantes:
+              posicion = texto.find(">") + 1
 
-                manifest.write_text(texto, encoding="utf-8")
+              texto = (
+                  texto[:posicion]
+                  + "\n    "
+                  + "\n    ".join(faltantes)
+                  + "\n"
+                  + texto[posicion:]
+              )
 
-            print(manifest.read_text(encoding="utf-8"))
-      PY
+              manifest.write_text(
+                  texto,
+                  encoding="utf-8"
+              )
+
+          print(
+              manifest.read_text(
+                  encoding="utf-8"
+              )
+          )
+          PY
 
       - name: Compilar APK de prueba
         run: |
