@@ -42,6 +42,7 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
+          import re
 
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           texto = manifest.read_text(encoding="utf-8")
@@ -54,19 +55,29 @@ jobs:
           ]
 
           faltantes = [
-              permiso
-              for permiso in permisos
+              permiso for permiso in permisos
               if permiso not in texto
           ]
 
           if faltantes:
-              posicion = texto.find(">") + 1
+              coincidencia = re.search(r"<manifest\b[^>]*>", texto)
+
+              if not coincidencia:
+                  raise RuntimeError(
+                      "No se encontró la etiqueta <manifest> en AndroidManifest.xml"
+                  )
+
+              posicion = coincidencia.end()
+
+              insercion = (
+                  "\n\n    "
+                  + "\n    ".join(faltantes)
+                  + "\n"
+              )
 
               texto = (
                   texto[:posicion]
-                  + "\n    "
-                  + "\n    ".join(faltantes)
-                  + "\n"
+                  + insercion
                   + texto[posicion:]
               )
 
@@ -75,11 +86,8 @@ jobs:
                   encoding="utf-8"
               )
 
-          print(
-              manifest.read_text(
-                  encoding="utf-8"
-              )
-          )
+          print("AndroidManifest.xml resultante:")
+          print(manifest.read_text(encoding="utf-8"))
           PY
 
       - name: Compilar APK de prueba
