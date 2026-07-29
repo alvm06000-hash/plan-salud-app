@@ -12,7 +12,7 @@ export async function guardarDatosNube(userId, plan) {
   const { error } = await supabase.from("app_state").upsert(
     {
       user_id: userId,
-      plan,
+      plan_data: plan || {},
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },
@@ -23,21 +23,20 @@ export async function guardarDatosNube(userId, plan) {
 
 export async function guardarHistorialNube(userId, historial) {
   verificarCliente();
-
   if (!Array.isArray(historial) || historial.length === 0) return;
 
   const registros = historial.map((registro) => ({
     id: registro.id,
     user_id: userId,
-    medicamento_id: registro.medicamentoId || null,
-    medicamento: registro.medicamento || "Medicamento",
-    dosis: registro.dosis || "",
-    momento_id: registro.momentoId || null,
-    momento: registro.momento || null,
-    estado: registro.estado,
-    fecha: registro.fecha,
-    fecha_hora: registro.fechaHora,
-    updated_at: new Date().toISOString(),
+    medication_id: registro.medicamentoId || null,
+    medication_name: registro.medicamento || "Medicamento",
+    dose: registro.dosis || "",
+    moment_id: registro.momentoId || null,
+    moment_name: registro.momento || null,
+    status: registro.estado,
+    scheduled_at: registro.fechaProgramada || null,
+    registered_at: registro.fechaHora || new Date().toISOString(),
+    local_date: registro.fecha,
   }));
 
   const { error } = await supabase
@@ -50,38 +49,38 @@ export async function guardarHistorialNube(userId, historial) {
 export async function cargarDatosNube(userId) {
   verificarCliente();
 
-  const [{ data: estado, error: errorEstado }, { data: historial, error: errorHistorial }] =
-    await Promise.all([
-      supabase
-        .from("app_state")
-        .select("plan")
-        .eq("user_id", userId)
-        .maybeSingle(),
-      supabase
-        .from("dose_history")
-        .select(
-          "id, medicamento_id, medicamento, dosis, momento_id, momento, estado, fecha, fecha_hora",
-        )
-        .eq("user_id", userId)
-        .order("fecha_hora", { ascending: false })
-        .limit(1000),
-    ]);
+  const [estadoResultado, historialResultado] = await Promise.all([
+    supabase
+      .from("app_state")
+      .select("plan_data")
+      .eq("user_id", userId)
+      .maybeSingle(),
+    supabase
+      .from("dose_history")
+      .select(
+        "id, medication_id, medication_name, dose, moment_id, moment_name, status, scheduled_at, registered_at, local_date",
+      )
+      .eq("user_id", userId)
+      .order("registered_at", { ascending: false })
+      .limit(1000),
+  ]);
 
-  if (errorEstado) throw errorEstado;
-  if (errorHistorial) throw errorHistorial;
+  if (estadoResultado.error) throw estadoResultado.error;
+  if (historialResultado.error) throw historialResultado.error;
 
   return {
-    plan: estado?.plan || null,
-    historial: (historial || []).map((registro) => ({
+    plan: estadoResultado.data?.plan_data || null,
+    historial: (historialResultado.data || []).map((registro) => ({
       id: registro.id,
-      medicamentoId: registro.medicamento_id,
-      medicamento: registro.medicamento,
-      dosis: registro.dosis,
-      momentoId: registro.momento_id,
-      momento: registro.momento,
-      estado: registro.estado,
-      fecha: registro.fecha,
-      fechaHora: registro.fecha_hora,
+      medicamentoId: registro.medication_id,
+      medicamento: registro.medication_name,
+      dosis: registro.dose || "",
+      momentoId: registro.moment_id,
+      momento: registro.moment_name,
+      estado: registro.status,
+      fechaProgramada: registro.scheduled_at,
+      fecha: registro.local_date,
+      fechaHora: registro.registered_at,
     })),
   };
 }
