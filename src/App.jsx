@@ -2,8 +2,16 @@ import React, { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { supabase, supabaseConfigurado } from "./supabaseClient";
+import { cargarDatosNube, guardarDatosNube, guardarHistorialNube } from "./cloudService";
 import {
   AlertCircle,
+  BarChart3,
+  Cloud,
+  LogIn,
+  LogOut,
+  RefreshCw,
+  User,
   BellRing,
   CalendarClock,
   CheckCircle2,
@@ -143,6 +151,13 @@ export default function PlanSalud() {
   const [mostrarOpcionesAlarmas, setMostrarOpcionesAlarmas] = useState(false);
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [historial, setHistorial] = useState([]);
+  const [sesion, setSesion] = useState(null);
+  const [correo, setCorreo] = useState("");
+  const [clave, setClave] = useState("");
+  const [modoRegistro, setModoRegistro] = useState(false);
+  const [authCargando, setAuthCargando] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [estadoNube, setEstadoNube] = useState("");
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -166,6 +181,25 @@ export default function PlanSalud() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!supabaseConfigurado) return undefined;
+
+    let activo = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (activo) setSesion(data.session || null);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_evento, nuevaSesion) => {
+      setSesion(nuevaSesion || null);
+    });
+
+    return () => {
+      activo = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
   async function guardar(nuevosDatos) {
     setDatos(nuevosDatos);
     try {
@@ -173,6 +207,12 @@ export default function PlanSalud() {
         key: "plan-salud:datos",
         value: JSON.stringify(nuevosDatos),
       });
+
+      if (sesion?.user?.id && supabaseConfigurado) {
+        guardarDatosNube(sesion.user.id, nuevosDatos).catch((errorNube) => {
+          console.error("No se pudo sincronizar el plan con la nube", errorNube);
+        });
+      }
     } catch (e) {
       console.error("No se pudo guardar el plan", e);
     }
@@ -313,6 +353,12 @@ export default function PlanSalud() {
         key: "plan-salud:historial",
         value: JSON.stringify(nuevoHistorial),
       });
+
+      if (sesion?.user?.id && supabaseConfigurado) {
+        guardarHistorialNube(sesion.user.id, nuevoHistorial).catch((errorNube) => {
+          console.error("No se pudo sincronizar el historial con la nube", errorNube);
+        });
+      }
     } catch (e) {
       console.error("No se pudo guardar el historial", e);
     }
@@ -346,6 +392,92 @@ export default function PlanSalud() {
   async function borrarHistorialHoy() {
     const hoy = fechaLocalClave();
     await guardarHistorial(historial.filter((r) => r.fecha !== hoy));
+  }
+
+  async function autenticar(evento) {
+    evento.preventDefault();
+
+    if (!supabaseConfigurado) {
+      setEstadoNube("Configura VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY.");
+      return;
+    }
+
+    if (!correo.trim() || clave.length < 6) {
+      setEstadoNube("Ingresa un correo válido y una contraseña de al menos 6 caracteres.");
+      return;
+    }
+
+    setAuthCargando(true);
+    setEstadoNube("");
+
+    try {
+      const resultado = modoRegistro
+        ? await supabase.auth.signUp({ email: correo.trim(), password: clave })
+        : await supabase.auth.signInWithPassword({ email: correo.trim(), password: clave });
+
+      if (resultado.error) throw resultado.error;
+
+      setEstadoNube(
+        modoRegistro
+          ? "Cuenta creada. Revisa tu correo si Supabase solicita confirmación."
+          : "Sesión iniciada correctamente.",
+      );
+      setClave("");
+    } catch (e) {
+      setEstadoNube(e.message || "No se pudo completar el acceso.");
+    } finally {
+      setAuthCargando(false);
+    }
+  }
+
+  async function cerrarSesion() {
+    await supabase.auth.signOut();
+    setEstadoNube("Sesión cerrada.");
+  }
+
+  async function sincronizarNube() {
+    if (!sesion?.user?.id || !supabaseConfigurado) return;
+
+    setSincronizando(true);
+    setEstadoNube("Sincronizando...");
+
+    try {
+      const remoto = await cargarDatosNube(sesion.user.id);
+
+      const planFinal = remoto.plan || datos || { medicamentos: [], citas: [] };
+      const historialRemoto = remoto.historial || [];
+      const mapa = new Map();
+
+      [...historialRemoto, ...historial].forEach((registro) => {
+        mapa.set(registro.id, registro);
+      });
+
+      const historialFinal = [...mapa.values()].sort(
+        (a, b) => new Date(b.fechaHora) - new Date(a.fechaHora),
+      );
+
+      await Preferences.set({
+        key: "plan-salud:datos",
+        value: JSON.stringify(planFinal),
+      });
+      await Preferences.set({
+        key: "plan-salud:historial",
+        value: JSON.stringify(historialFinal),
+      });
+
+      setDatos(planFinal);
+      setHistorial(historialFinal);
+
+      await guardarDatosNube(sesion.user.id, planFinal);
+      await guardarHistorialNube(sesion.user.id, historialFinal);
+
+      setEstadoNube("Datos sincronizados correctamente.");
+    } catch (e) {
+      console.error(e);
+      setEstadoNube(e.message || "No se pudo sincronizar con la nube.");
+    } finally {
+      setSincronizando(false);
+    }
   }
 
   async function programarAlarmasTelefono() {
@@ -516,6 +648,22 @@ export default function PlanSalud() {
   const historialHoy = historial.filter((registro) => registro.fecha === hoy);
   const tomadasHoy = historialHoy.filter((registro) => registro.estado === "tomado").length;
   const omitidasHoy = historialHoy.filter((registro) => registro.estado === "omitido").length;
+  const totalRegistradas = historial.length;
+  const totalTomadas = historial.filter((registro) => registro.estado === "tomado").length;
+  const totalOmitidas = historial.filter((registro) => registro.estado === "omitido").length;
+  const cumplimiento = totalRegistradas
+    ? Math.round((totalTomadas / totalRegistradas) * 100)
+    : 0;
+  const desdeHace7Dias = new Date();
+  desdeHace7Dias.setDate(desdeHace7Dias.getDate() - 6);
+  desdeHace7Dias.setHours(0, 0, 0, 0);
+  const historial7Dias = historial.filter(
+    (registro) => new Date(registro.fechaHora) >= desdeHace7Dias,
+  );
+  const tomadas7Dias = historial7Dias.filter((registro) => registro.estado === "tomado").length;
+  const cumplimiento7Dias = historial7Dias.length
+    ? Math.round((tomadas7Dias / historial7Dias.length) * 100)
+    : 0;
 
   return (
     <div
@@ -607,6 +755,88 @@ export default function PlanSalud() {
       </nav>
 
       <main style={{ maxWidth: 640, margin: "0 auto", padding: 20 }}>
+        <section
+          style={{
+            background: "#FFFDF8",
+            border: "1px solid #E5DFC9",
+            borderRadius: 14,
+            padding: 14,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#1E3F35" }}>
+            <Cloud size={18} /> Base de datos en la nube
+          </div>
+
+          {!supabaseConfigurado ? (
+            <div style={{ marginTop: 8, fontSize: 12.5, color: "#9C4A2E", lineHeight: 1.5 }}>
+              Falta configurar Supabase en el archivo <strong>.env</strong>.
+            </div>
+          ) : sesion ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#5B6B60" }}>
+                <User size={15} /> {sesion.user.email}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                <button
+                  onClick={sincronizarNube}
+                  disabled={sincronizando}
+                  style={{ padding: 10, borderRadius: 9, border: "none", background: "#1E3F35", color: "white", fontWeight: 700 }}
+                >
+                  <RefreshCw size={14} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                  {sincronizando ? "Sincronizando" : "Sincronizar"}
+                </button>
+                <button
+                  onClick={cerrarSesion}
+                  style={{ padding: 10, borderRadius: 9, border: "1px solid #B87333", background: "transparent", color: "#8A5A3B", fontWeight: 700 }}
+                >
+                  <LogOut size={14} style={{ marginRight: 5, verticalAlign: "middle" }} /> Salir
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={autenticar} style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <input
+                type="email"
+                value={correo}
+                onChange={(e) => setCorreo(e.target.value)}
+                placeholder="Correo electrónico"
+                autoComplete="email"
+                style={{ padding: 10, borderRadius: 9, border: "1px solid #D8D2BC" }}
+              />
+              <input
+                type="password"
+                value={clave}
+                onChange={(e) => setClave(e.target.value)}
+                placeholder="Contraseña (mínimo 6 caracteres)"
+                autoComplete={modoRegistro ? "new-password" : "current-password"}
+                style={{ padding: 10, borderRadius: 9, border: "1px solid #D8D2BC" }}
+              />
+              <button
+                type="submit"
+                disabled={authCargando}
+                style={{ padding: 10, borderRadius: 9, border: "none", background: "#1E3F35", color: "white", fontWeight: 700 }}
+              >
+                <LogIn size={14} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                {authCargando ? "Procesando..." : modoRegistro ? "Crear cuenta" : "Iniciar sesión"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setModoRegistro((valor) => !valor)}
+                style={{ border: "none", background: "transparent", color: "#8A5A3B", fontSize: 12, fontWeight: 600 }}
+              >
+                {modoRegistro ? "Ya tengo una cuenta" : "Crear una cuenta nueva"}
+              </button>
+            </form>
+          )}
+
+          {estadoNube && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#5B6B60", lineHeight: 1.4 }}>
+              {estadoNube}
+            </div>
+          )}
+        </section>
+
         {vista === "subir" && (
           <div>
             <p
@@ -948,6 +1178,33 @@ export default function PlanSalud() {
                       {avisoAlarmas.texto}
                     </div>
                   )}
+                </div>
+
+                <div
+                  style={{
+                    background: "#1E3F35",
+                    color: "#F1EEE4",
+                    borderRadius: 14,
+                    padding: 16,
+                    marginBottom: 18,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700 }}>
+                    <BarChart3 size={18} color="#C4915C" /> Estadísticas
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginTop: 12 }}>
+                    {[
+                      ["Cumplimiento total", `${cumplimiento}%`],
+                      ["Últimos 7 días", `${cumplimiento7Dias}%`],
+                      ["Dosis tomadas", totalTomadas],
+                      ["Dosis omitidas", totalOmitidas],
+                    ].map(([etiqueta, valor]) => (
+                      <div key={etiqueta} style={{ background: "rgba(255,255,255,0.07)", borderRadius: 10, padding: 10 }}>
+                        <div style={{ fontSize: 11, color: "#9DB8AC" }}>{etiqueta}</div>
+                        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, marginTop: 2 }}>{valor}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div
