@@ -6,7 +6,10 @@ import {
   AlertCircle,
   BellRing,
   CalendarClock,
+  CheckCircle2,
+  CircleX,
   Clock,
+  History,
   ExternalLink,
   Loader2,
   Pill,
@@ -115,6 +118,20 @@ function abrirGoogleCalendar(medicamento, momentoId) {
   window.open(url.toString(), "_blank", "noopener,noreferrer");
 }
 
+function momentoCercano() {
+  const hora = new Date().getHours();
+  if (hora < 12) return "manana";
+  if (hora < 18) return "tarde";
+  return "noche";
+}
+
+function fechaLocalClave(fecha = new Date()) {
+  const anio = fecha.getFullYear();
+  const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+  const dia = String(fecha.getDate()).padStart(2, "0");
+  return `${anio}-${mes}-${dia}`;
+}
+
 export default function PlanSalud() {
   const [imagenPreview, setImagenPreview] = useState(null);
   const [cargando, setCargando] = useState(false);
@@ -125,6 +142,7 @@ export default function PlanSalud() {
   const [avisoAlarmas, setAvisoAlarmas] = useState(null);
   const [mostrarOpcionesAlarmas, setMostrarOpcionesAlarmas] = useState(false);
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
+  const [historial, setHistorial] = useState([]);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -134,6 +152,13 @@ export default function PlanSalud() {
         if (res?.value) {
           setDatos(JSON.parse(res.value));
           setVista("horario");
+        }
+
+        const historialGuardado = await Preferences.get({
+          key: "plan-salud:historial",
+        });
+        if (historialGuardado?.value) {
+          setHistorial(JSON.parse(historialGuardado.value));
         }
       } catch (e) {
         console.error("No se pudieron recuperar los datos guardados", e);
@@ -279,6 +304,48 @@ export default function PlanSalud() {
       ...datos,
       citas: (datos.citas || []).filter((c) => c.id !== citaId),
     });
+  }
+
+  async function guardarHistorial(nuevoHistorial) {
+    setHistorial(nuevoHistorial);
+    try {
+      await Preferences.set({
+        key: "plan-salud:historial",
+        value: JSON.stringify(nuevoHistorial),
+      });
+    } catch (e) {
+      console.error("No se pudo guardar el historial", e);
+    }
+  }
+
+  async function registrarDosis(medicamento, estado) {
+    const ahora = new Date();
+    const momentoId = momentoCercano();
+    const registro = {
+      id: `registro-${Date.now()}`,
+      medicamentoId: medicamento.id,
+      medicamento: medicamento.nombre,
+      dosis: medicamento.dosis || "",
+      momentoId,
+      momento: MOMENTOS.find((m) => m.id === momentoId)?.label || momentoId,
+      estado,
+      fecha: fechaLocalClave(ahora),
+      fechaHora: ahora.toISOString(),
+    };
+
+    await guardarHistorial([registro, ...historial].slice(0, 500));
+    setAvisoAlarmas({
+      tipo: "ok",
+      texto:
+        estado === "tomado"
+          ? `${medicamento.nombre} registrado como tomado.`
+          : `${medicamento.nombre} registrado como omitido.`,
+    });
+  }
+
+  async function borrarHistorialHoy() {
+    const hoy = fechaLocalClave();
+    await guardarHistorial(historial.filter((r) => r.fecha !== hoy));
   }
 
   async function programarAlarmasTelefono() {
@@ -444,6 +511,11 @@ export default function PlanSalud() {
         "Elegí cada medicamento y horario para agregarlo a Google Calendar.",
     });
   }
+
+  const hoy = fechaLocalClave();
+  const historialHoy = historial.filter((registro) => registro.fecha === hoy);
+  const tomadasHoy = historialHoy.filter((registro) => registro.estado === "tomado").length;
+  const omitidasHoy = historialHoy.filter((registro) => registro.estado === "omitido").length;
 
   return (
     <div
@@ -880,6 +952,56 @@ export default function PlanSalud() {
 
                 <div
                   style={{
+                    background: "#FFFDF8",
+                    border: "1px solid #E5DFC9",
+                    borderRadius: 14,
+                    padding: 14,
+                    marginBottom: 18,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700, color: "#1E3F35" }}>
+                        <History size={17} /> Historial de hoy
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "#6B7A70", marginTop: 4 }}>
+                        {tomadasHoy} tomadas · {omitidasHoy} omitidas
+                      </div>
+                    </div>
+                    {historialHoy.length > 0 && (
+                      <button onClick={borrarHistorialHoy} style={{ border: "none", background: "transparent", color: "#9C4A2E", fontSize: 11.5, fontWeight: 600 }}>
+                        Limpiar hoy
+                      </button>
+                    )}
+                  </div>
+
+                  {historialHoy.length === 0 ? (
+                    <div style={{ marginTop: 10, fontSize: 12.5, color: "#8A9A90" }}>
+                      Aún no registraste ninguna dosis hoy.
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 10, display: "grid", gap: 7 }}>
+                      {historialHoy.slice(0, 8).map((registro) => (
+                        <div key={registro.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+                          {registro.estado === "tomado" ? (
+                            <CheckCircle2 size={16} color="#276749" />
+                          ) : (
+                            <CircleX size={16} color="#9C4A2E" />
+                          )}
+                          <span style={{ flex: 1 }}>
+                            <strong>{registro.medicamento}</strong> · {registro.momento}
+                          </span>
+                          <span style={{ color: "#8A9A90", fontSize: 11 }}>
+                            {new Date(registro.fechaHora).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
@@ -1026,6 +1148,52 @@ export default function PlanSalud() {
                               </button>
                             );
                           })}
+                        </div>
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: 7,
+                            marginTop: 10,
+                          }}
+                        >
+                          <button
+                            onClick={() => registrarDosis(m, "tomado")}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 5,
+                              padding: "8px 7px",
+                              borderRadius: 9,
+                              border: "none",
+                              background: "#276749",
+                              color: "white",
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                            }}
+                          >
+                            <CheckCircle2 size={14} /> Tomado
+                          </button>
+                          <button
+                            onClick={() => registrarDosis(m, "omitido")}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 5,
+                              padding: "8px 7px",
+                              borderRadius: 9,
+                              border: "1px solid #C4915C",
+                              background: "transparent",
+                              color: "#9C4A2E",
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                            }}
+                          >
+                            <CircleX size={14} /> Omitir
+                          </button>
                         </div>
 
                         {mostrarCalendario && (
