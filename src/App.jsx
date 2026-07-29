@@ -1,28 +1,27 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { LocalNotifications } from "@capacitor/local-notifications";
-import { Capacitor } from "@capacitor/core";
 import {
-  Upload,
+  AlertCircle,
+  BellRing,
+  CalendarClock,
+  Clock,
+  ExternalLink,
   Loader2,
   Pill,
-  CalendarClock,
-  AlertCircle,
   Plus,
-  Trash2,
-  Clock,
   Stethoscope,
+  Trash2,
+  Upload,
   X,
-  BellRing,
-  ExternalLink,
-  CalendarPlus,
 } from "lucide-react";
 
 const API_URL =
   "https://plan-salud-server-production.up.railway.app/api/leer-receta";
 
 const MOMENTOS = [
-  { id: "manana", label: "Mañana", sub: "06:00–11:59" },
+  { id: "manana", label: "Mañana", sub: "6:00–11:59" },
   { id: "tarde", label: "Tarde", sub: "12:00–17:59" },
   { id: "noche", label: "Noche", sub: "18:00–23:59" },
 ];
@@ -44,61 +43,76 @@ const PALETA = [
   "#C4915C",
 ];
 
-function hashId(texto) {
-  let hash = 0;
-
-  for (let i = 0; i < texto.length; i += 1) {
-    hash = ((hash << 5) - hash + texto.charCodeAt(i)) | 0;
-  }
-
-  return (Math.abs(hash) % 2000000000) + 1;
-}
-
-function siguienteFecha(hora, minuto, diasAdelante = 0) {
-  const fecha = new Date();
-
-  fecha.setDate(fecha.getDate() + diasAdelante);
-  fecha.setHours(hora, minuto, 0, 0);
-
-  if (diasAdelante === 0 && fecha.getTime() <= Date.now()) {
-    fecha.setDate(fecha.getDate() + 1);
-  }
-
-  return fecha;
-}
-
-function fechaGoogle(fecha) {
-  return fecha
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z");
-}
-
-function colorPara(nombre = "") {
-  let hash = 0;
-
+function colorPara(nombre = "Medicamento") {
+  let h = 0;
   for (let i = 0; i < nombre.length; i += 1) {
-    hash = nombre.charCodeAt(i) + ((hash << 5) - hash);
+    h = nombre.charCodeAt(i) + ((h << 5) - h);
   }
-
-  return PALETA[Math.abs(hash) % PALETA.length];
+  return PALETA[Math.abs(h) % PALETA.length];
 }
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-
-    reader.onload = () => {
-      const resultado = String(reader.result || "");
-      resolve(resultado.split(",")[1]);
-    };
-
-    reader.onerror = () => {
-      reject(new Error("No se pudo leer el archivo"));
-    };
-
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
     reader.readAsDataURL(file);
   });
+}
+
+function siguienteFecha(hora, minuto, diasExtra = 0) {
+  const fecha = new Date();
+  fecha.setSeconds(0, 0);
+  fecha.setHours(hora, minuto, 0, 0);
+
+  if (fecha.getTime() <= Date.now()) {
+    fecha.setDate(fecha.getDate() + 1);
+  }
+
+  fecha.setDate(fecha.getDate() + diasExtra);
+  return fecha;
+}
+
+function hashId(texto) {
+  let hash = 0;
+  for (let i = 0; i < texto.length; i += 1) {
+    hash = (hash * 31 + texto.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % 2147483647 || 1;
+}
+
+function formatoGoogleCalendar(fecha) {
+  return fecha.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function abrirGoogleCalendar(medicamento, momentoId) {
+  const horario = HORAS_MOMENTO[momentoId];
+  if (!horario) return;
+
+  const inicio = siguienteFecha(horario.hora, horario.minuto);
+  const fin = new Date(inicio.getTime() + 15 * 60 * 1000);
+  const duracion = Math.max(
+    1,
+    Math.min(Number(medicamento.duracion_dias) || 7, 365),
+  );
+
+  const titulo = `Tomar ${medicamento.nombre}`;
+  const detalles = [medicamento.dosis, medicamento.indicaciones]
+    .filter(Boolean)
+    .join(" · ");
+
+  const recurrencia = `RRULE:FREQ=DAILY;COUNT=${duracion}`;
+  const url = new URL("https://calendar.google.com/calendar/render");
+  url.searchParams.set("action", "TEMPLATE");
+  url.searchParams.set("text", titulo);
+  url.searchParams.set(
+    "dates",
+    `${formatoGoogleCalendar(inicio)}/${formatoGoogleCalendar(fin)}`,
+  );
+  url.searchParams.set("details", detalles || "Recordatorio de medicamento");
+  url.searchParams.set("recur", recurrencia);
+
+  window.open(url.toString(), "_blank", "noopener,noreferrer");
 }
 
 export default function PlanSalud() {
@@ -109,38 +123,33 @@ export default function PlanSalud() {
   const [vista, setVista] = useState("subir");
   const [medEditando, setMedEditando] = useState(null);
   const [avisoAlarmas, setAvisoAlarmas] = useState(null);
-
+  const [mostrarOpcionesAlarmas, setMostrarOpcionesAlarmas] = useState(false);
+  const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
-    async function cargarDatosGuardados() {
+    (async () => {
       try {
-        const resultado = await Preferences.get({
-          key: "plan-salud:datos",
-        });
-
-        if (resultado.value) {
-          setDatos(JSON.parse(resultado.value));
+        const res = await Preferences.get({ key: "plan-salud:datos" });
+        if (res?.value) {
+          setDatos(JSON.parse(res.value));
           setVista("horario");
         }
-      } catch (err) {
-        console.error("No se pudieron cargar los datos guardados", err);
+      } catch (e) {
+        console.error("No se pudieron recuperar los datos guardados", e);
       }
-    }
-
-    cargarDatosGuardados();
+    })();
   }, []);
 
   async function guardar(nuevosDatos) {
     setDatos(nuevosDatos);
-
     try {
       await Preferences.set({
         key: "plan-salud:datos",
         value: JSON.stringify(nuevosDatos),
       });
-    } catch (err) {
-      console.error("No se pudo guardar el plan", err);
+    } catch (e) {
+      console.error("No se pudo guardar el plan", e);
     }
   }
 
@@ -151,82 +160,55 @@ export default function PlanSalud() {
     setCargando(true);
 
     try {
-      const base64 = await fileToBase64(file);
-
-      if (imagenPreview) {
-        URL.revokeObjectURL(imagenPreview);
-      }
-
+      const b64 = await fileToBase64(file);
       setImagenPreview(URL.createObjectURL(file));
 
       const response = await fetch(API_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imagen: base64,
+          imagen: b64,
           mediaType: file.type || "image/jpeg",
         }),
       });
 
       if (!response.ok) {
-        let mensajeServidor = "";
-
-        try {
-          const contenido = await response.json();
-          mensajeServidor = contenido?.error || contenido?.message || "";
-        } catch {
-          mensajeServidor = "";
-        }
-
+        const detalle = await response.text();
         throw new Error(
-          mensajeServidor ||
-            `El servidor respondió con estado ${response.status}`
+          `El servidor respondió ${response.status}: ${detalle.slice(0, 200)}`,
         );
       }
 
       const parsed = await response.json();
 
       if (parsed.error) {
-        throw new Error(parsed.error);
+        setError(parsed.error);
+        return;
       }
 
-      const ahora = Date.now();
-
-      const medicamentos = (parsed.medicamentos || []).map(
-        (medicamento, indice) => ({
-          id: `med-${ahora}-${indice}`,
-          nombre: medicamento.nombre || "Medicamento",
-          dosis: medicamento.dosis || "",
-          momentos:
-            Array.isArray(medicamento.momentos) &&
-            medicamento.momentos.length > 0
-              ? medicamento.momentos
-              : ["manana"],
-          duracion_dias: medicamento.duracion_dias || null,
-          indicaciones: medicamento.indicaciones || "",
-        })
-      );
-
-      const citas = (parsed.citas || []).map((cita, indice) => ({
-        id: `cita-${ahora}-${indice}`,
-        ...cita,
+      parsed.medicamentos = (parsed.medicamentos || []).map((m, i) => ({
+        id: `med-${Date.now()}-${i}`,
+        nombre: m.nombre || "Medicamento",
+        dosis: m.dosis || "",
+        momentos:
+          Array.isArray(m.momentos) && m.momentos.length
+            ? m.momentos
+            : ["manana"],
+        duracion_dias: m.duracion_dias || null,
+        indicaciones: m.indicaciones || "",
       }));
 
-      await guardar({
-        ...parsed,
-        medicamentos,
-        citas,
-      });
+      parsed.citas = (parsed.citas || []).map((c, i) => ({
+        id: `cita-${Date.now()}-${i}`,
+        ...c,
+      }));
 
+      await guardar(parsed);
       setVista("horario");
-    } catch (err) {
-      console.error("Error leyendo la receta:", err);
-
+    } catch (e) {
+      console.error(e);
       setError(
-        err.message ||
-          "No se pudo leer la receta. Revisa tu conexión o prueba con una foto más nítida."
+        "No se pudo leer la receta. Revisá tu conexión o probá con una foto más nítida.",
       );
     } finally {
       setCargando(false);
@@ -236,34 +218,28 @@ export default function PlanSalud() {
   function toggleMomento(medId, momentoId) {
     if (!datos) return;
 
-    const medicamentos = (datos.medicamentos || []).map((medicamento) => {
-      if (medicamento.id !== medId) return medicamento;
-
-      const momentosActuales = medicamento.momentos || [];
-      const seleccionado = momentosActuales.includes(momentoId);
-
-      return {
-        ...medicamento,
-        momentos: seleccionado
-          ? momentosActuales.filter((id) => id !== momentoId)
-          : [...momentosActuales, momentoId],
-      };
-    });
-
-    guardar({
+    const nuevosDatos = {
       ...datos,
-      medicamentos,
-    });
+      medicamentos: datos.medicamentos.map((m) => {
+        if (m.id !== medId) return m;
+        const tiene = m.momentos.includes(momentoId);
+        return {
+          ...m,
+          momentos: tiene
+            ? m.momentos.filter((x) => x !== momentoId)
+            : [...m.momentos, momentoId],
+        };
+      }),
+    };
+
+    guardar(nuevosDatos);
   }
 
   function eliminarMed(medId) {
     if (!datos) return;
-
     guardar({
       ...datos,
-      medicamentos: (datos.medicamentos || []).filter(
-        (medicamento) => medicamento.id !== medId
-      ),
+      medicamentos: datos.medicamentos.filter((m) => m.id !== medId),
     });
   }
 
@@ -278,9 +254,8 @@ export default function PlanSalud() {
     };
 
     const nuevosDatos = {
-      ...(datos || {}),
+      ...(datos || { medicamentos: [], citas: [] }),
       medicamentos: [...(datos?.medicamentos || []), nuevo],
-      citas: datos?.citas || [],
     };
 
     guardar(nuevosDatos);
@@ -290,99 +265,27 @@ export default function PlanSalud() {
 
   function actualizarCampoMed(medId, campo, valor) {
     if (!datos) return;
-
     guardar({
       ...datos,
-      medicamentos: (datos.medicamentos || []).map((medicamento) =>
-        medicamento.id === medId
-          ? {
-              ...medicamento,
-              [campo]: valor,
-            }
-          : medicamento
+      medicamentos: datos.medicamentos.map((m) =>
+        m.id === medId ? { ...m, [campo]: valor } : m,
       ),
     });
   }
 
   function eliminarCita(citaId) {
     if (!datos) return;
-
     guardar({
       ...datos,
-      citas: (datos.citas || []).filter((cita) => cita.id !== citaId),
+      citas: (datos.citas || []).filter((c) => c.id !== citaId),
     });
   }
 
-  function construirUrlGoogleCalendar(med, momentoId) {
-    const horario = HORAS_MOMENTO[momentoId];
-
-    if (!horario) return null;
-
-    const inicio = siguienteFecha(horario.hora, horario.minuto);
-    const fin = new Date(inicio.getTime() + 15 * 60 * 1000);
-
-    const cantidad = Math.max(
-      1,
-      Math.min(Number(med.duracion_dias) || 30, 365)
-    );
-
-    const params = new URLSearchParams({
-      action: "TEMPLATE",
-      text: `Tomar ${med.nombre}`,
-      dates: `${fechaGoogle(inicio)}/${fechaGoogle(fin)}`,
-      details:
-        [med.dosis, med.indicaciones, "Creado desde Mi Plan de Salud"]
-          .filter(Boolean)
-          .join("\n") || "Recordatorio de medicamento",
-      recur: `RRULE:FREQ=DAILY;COUNT=${cantidad}`,
-    });
-
-    return `https://calendar.google.com/calendar/render?${params.toString()}`;
-  }
-
-  function abrirGoogleCalendar(med, momentoId) {
-    const url = construirUrlGoogleCalendar(med, momentoId);
-
-    if (!url) {
-      setAvisoAlarmas({
-        tipo: "error",
-        texto: "No se pudo preparar el evento de Google Calendar.",
-      });
-      return;
-    }
-
-    window.open(url, "_blank");
-  }
-
-  function abrirPrimerEventoGoogleCalendar() {
-    const medicamentos = datos?.medicamentos || [];
-
-    for (const medicamento of medicamentos) {
-      for (const momentoId of medicamento.momentos || []) {
-        abrirGoogleCalendar(medicamento, momentoId);
-
-        setAvisoAlarmas({
-          tipo: "ok",
-          texto:
-            "Google Calendar se abrió con el primer evento. Guarda el evento y usa los botones de cada medicamento para agregar los demás horarios.",
-        });
-
-        return;
-      }
-    }
-
-    setAvisoAlarmas({
-      tipo: "error",
-      texto: "No hay horarios seleccionados para Google Calendar.",
-    });
-  }
-
-  async function programarAlarmas() {
+  async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
       setAvisoAlarmas({
         tipo: "error",
-        texto:
-          "Agrega al menos un medicamento antes de activar las alarmas.",
+        texto: "Agregá al menos un medicamento antes de activar las alarmas.",
       });
       return;
     }
@@ -390,98 +293,66 @@ export default function PlanSalud() {
     if (!Capacitor.isNativePlatform()) {
       setAvisoAlarmas({
         tipo: "error",
-        texto:
-          "Las alarmas locales solo funcionan dentro de la APK instalada.",
+        texto: "Las alarmas locales solo funcionan en la APK instalada.",
       });
       return;
     }
 
     try {
-      setAvisoAlarmas(null);
-
       const permiso = await LocalNotifications.requestPermissions();
 
       if (permiso.display !== "granted") {
         setAvisoAlarmas({
           tipo: "error",
-          texto:
-            "Android no concedió permiso para mostrar notificaciones. Actívalo desde Ajustes → Aplicaciones → Mi Plan de Salud → Notificaciones.",
+          texto: "Android no concedió permiso para mostrar notificaciones.",
         });
         return;
       }
 
-      const pendientes = await LocalNotifications.getPending();
-
-      const idsGuardados = await Preferences.get({
+      const anteriores = await Preferences.get({
         key: "plan-salud:notificaciones",
       });
 
-      let idsAnteriores = [];
+      const idsAnteriores = anteriores.value
+        ? JSON.parse(anteriores.value)
+        : [];
 
-      try {
-        idsAnteriores = idsGuardados.value
-          ? JSON.parse(idsGuardados.value)
-          : [];
-      } catch {
-        idsAnteriores = [];
-      }
-
-      const idsPendientes = (pendientes.notifications || []).map(
-        (notificacion) => notificacion.id
-      );
-
-      const idsParaCancelar = [
-        ...new Set([...idsAnteriores, ...idsPendientes]),
-      ];
-
-      if (idsParaCancelar.length > 0) {
+      if (idsAnteriores.length) {
         await LocalNotifications.cancel({
-          notifications: idsParaCancelar.map((id) => ({ id })),
+          notifications: idsAnteriores.map((id) => ({ id })),
         });
       }
 
       const notificaciones = [];
 
-      for (const medicamento of datos.medicamentos) {
-        const duracion = Math.max(
+      for (const med of datos.medicamentos) {
+        const dias = Math.max(
           1,
-          Math.min(Number(medicamento.duracion_dias) || 7, 30)
+          Math.min(Number(med.duracion_dias) || 7, 30),
         );
 
-        for (const momentoId of medicamento.momentos || []) {
+        for (const momentoId of med.momentos || []) {
           const horario = HORAS_MOMENTO[momentoId];
-
           if (!horario) continue;
 
-          for (let dia = 0; dia < duracion; dia += 1) {
-            const fecha = siguienteFecha(
-              horario.hora,
-              horario.minuto,
-              dia
-            );
-
+          for (let dia = 0; dia < dias; dia += 1) {
+            const at = siguienteFecha(horario.hora, horario.minuto, dia);
             const id = hashId(
-              `${medicamento.id}-${momentoId}-${fecha
-                .toISOString()
-                .slice(0, 10)}`
+              `${med.id}-${momentoId}-${at.toISOString().slice(0, 10)}`,
             );
 
             notificaciones.push({
               id,
-              title: `Hora de tomar ${medicamento.nombre}`,
+              title: `Hora de tomar ${med.nombre}`,
               body:
-                [medicamento.dosis, medicamento.indicaciones]
-                  .filter(Boolean)
-                  .join(" · ") ||
+                [med.dosis, med.indicaciones].filter(Boolean).join(" · ") ||
                 `Toma programada para las ${horario.label}`,
               schedule: {
-                at: fecha,
+                at,
                 allowWhileIdle: true,
               },
-              sound: "default",
-              actionTypeId: "",
               extra: {
-                medicamentoId: medicamento.id,
+                medicamentoId: med.id,
                 momento: momentoId,
               },
             });
@@ -489,46 +360,49 @@ export default function PlanSalud() {
         }
       }
 
-      if (notificaciones.length === 0) {
+      if (!notificaciones.length) {
         throw new Error("No hay horarios seleccionados");
       }
 
-      /*
-       * Android limita el número de alarmas pendientes.
-       * Se programan como máximo 60 para evitar fallos.
-       */
-      const notificacionesLimitadas = notificaciones.slice(0, 60);
-
-      await LocalNotifications.schedule({
-        notifications: notificacionesLimitadas,
-      });
+      await LocalNotifications.schedule({ notifications: notificaciones });
 
       await Preferences.set({
         key: "plan-salud:notificaciones",
-        value: JSON.stringify(
-          notificacionesLimitadas.map(
-            (notificacion) => notificacion.id
-          )
-        ),
+        value: JSON.stringify(notificaciones.map((n) => n.id)),
       });
 
       setAvisoAlarmas({
         tipo: "ok",
-        texto: `${notificacionesLimitadas.length} alarmas del teléfono programadas correctamente. Google Calendar se mantiene como una opción separada.`,
+        texto: `${notificaciones.length} alarmas locales programadas en el teléfono.`,
       });
-    } catch (err) {
-      console.error("No se pudieron programar las alarmas:", err);
-
+      setMostrarOpcionesAlarmas(false);
+    } catch (e) {
+      console.error("No se pudieron programar las alarmas", e);
       setAvisoAlarmas({
         tipo: "error",
         texto:
-          "No se pudieron programar las alarmas. Revisa los permisos de notificaciones, alarmas y ahorro de batería.",
+          "No se pudieron programar las alarmas. Revisá los permisos de notificaciones, alarmas exactas y batería.",
       });
     }
   }
 
-  const medicamentos = datos?.medicamentos || [];
-  const citas = datos?.citas || [];
+  function mostrarEventosGoogleCalendar() {
+    if (!datos?.medicamentos?.length) {
+      setAvisoAlarmas({
+        tipo: "error",
+        texto: "Agregá al menos un medicamento antes de usar Google Calendar.",
+      });
+      return;
+    }
+
+    setMostrarCalendario(true);
+    setMostrarOpcionesAlarmas(false);
+    setAvisoAlarmas({
+      tipo: "ok",
+      texto:
+        "Elegí cada medicamento y horario para agregarlo a Google Calendar.",
+    });
+  }
 
   return (
     <div
@@ -539,36 +413,14 @@ export default function PlanSalud() {
         color: "#1C2B24",
       }}
     >
-      <style>
-        {`
-          @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
-
-          * {
-            box-sizing: border-box;
-          }
-
-          button {
-            font-family: inherit;
-            cursor: pointer;
-          }
-
-          input,
-          textarea {
-            font-family: inherit;
-          }
-
-          ::selection {
-            background: #B87333;
-            color: white;
-          }
-
-          @keyframes spin {
-            to {
-              transform: rotate(360deg);
-            }
-          }
-        `}
-      </style>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+        * { box-sizing: border-box; }
+        button { font-family: inherit; cursor: pointer; }
+        input, textarea { font-family: inherit; }
+        ::selection { background: #B87333; color: white; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
 
       <header
         style={{
@@ -587,7 +439,6 @@ export default function PlanSalud() {
             }}
           >
             <Stethoscope size={20} color="#C4915C" />
-
             <span
               style={{
                 fontFamily: "'IBM Plex Mono', monospace",
@@ -600,7 +451,6 @@ export default function PlanSalud() {
               Asistente de recetas
             </span>
           </div>
-
           <h1
             style={{
               fontFamily: "'Fraunces', serif",
@@ -624,33 +474,26 @@ export default function PlanSalud() {
           padding: "16px 20px 0",
         }}
       >
-        {["subir", "horario"].map((opcion) => (
+        {["subir", "horario"].map((v) => (
           <button
-            key={opcion}
-            onClick={() => setVista(opcion)}
+            key={v}
+            onClick={() => setVista(v)}
             style={{
               padding: "8px 16px",
               borderRadius: 20,
               border: "1px solid #1E3F35",
-              background:
-                vista === opcion ? "#1E3F35" : "transparent",
-              color: vista === opcion ? "#F1EEE4" : "#1E3F35",
+              background: vista === v ? "#1E3F35" : "transparent",
+              color: vista === v ? "#F1EEE4" : "#1E3F35",
               fontSize: 13,
               fontWeight: 600,
             }}
           >
-            {opcion === "subir" ? "Nueva receta" : "Mi horario"}
+            {v === "subir" ? "Nueva receta" : "Mi horario"}
           </button>
         ))}
       </nav>
 
-      <main
-        style={{
-          maxWidth: 640,
-          margin: "0 auto",
-          padding: 20,
-        }}
-      >
+      <main style={{ maxWidth: 640, margin: "0 auto", padding: 20 }}>
         {vista === "subir" && (
           <div>
             <p
@@ -661,9 +504,9 @@ export default function PlanSalud() {
                 marginBottom: 20,
               }}
             >
-              Sube una foto clara de la receta. La aplicación
-              transcribirá los medicamentos y preparará los horarios
-              sugeridos.
+              Subí una foto clara de la receta. La transcribo y armo el
+              pastillero con los horarios sugeridos — después podés ajustar
+              cada toma a mano.
             </p>
 
             <div
@@ -695,7 +538,6 @@ export default function PlanSalud() {
                   style={{ marginBottom: 10 }}
                 />
               )}
-
               <div
                 style={{
                   fontWeight: 600,
@@ -703,28 +545,15 @@ export default function PlanSalud() {
                   fontSize: 15,
                 }}
               >
-                {cargando
-                  ? "Leyendo la receta..."
-                  : "Toca para subir una foto"}
+                {cargando ? "Leyendo la receta..." : "Tocá para subir una foto"}
               </div>
-
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "#8A9A90",
-                  marginTop: 4,
-                }}
-              >
+              <div style={{ fontSize: 12, color: "#8A9A90", marginTop: 4 }}>
                 JPG o PNG
               </div>
-
               {cargando && (
                 <Loader2
                   size={20}
-                  style={{
-                    marginTop: 12,
-                    animation: "spin 1s linear infinite",
-                  }}
+                  style={{ marginTop: 12, animation: "spin 1s linear infinite" }}
                 />
               )}
             </div>
@@ -734,9 +563,7 @@ export default function PlanSalud() {
               type="file"
               accept="image/*"
               style={{ display: "none" }}
-              onChange={(evento) =>
-                manejarArchivo(evento.target.files?.[0])
-              }
+              onChange={(e) => manejarArchivo(e.target.files?.[0])}
             />
 
             {error && (
@@ -752,14 +579,7 @@ export default function PlanSalud() {
                   color: "#9C4A2E",
                 }}
               >
-                <AlertCircle
-                  size={18}
-                  style={{
-                    flexShrink: 0,
-                    marginTop: 1,
-                  }}
-                />
-
+                <AlertCircle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
                 <span style={{ fontSize: 14 }}>{error}</span>
               </div>
             )}
@@ -782,8 +602,7 @@ export default function PlanSalud() {
                 gap: 6,
               }}
             >
-              <Plus size={16} />
-              Agregar un medicamento manualmente
+              <Plus size={16} /> O cargar un medicamento manualmente
             </button>
           </div>
         )}
@@ -791,7 +610,8 @@ export default function PlanSalud() {
         {vista === "horario" && (
           <div>
             {!datos ||
-            (medicamentos.length === 0 && citas.length === 0) ? (
+            (datos.medicamentos.length === 0 &&
+              (!datos.citas || datos.citas.length === 0)) ? (
               <div
                 style={{
                   textAlign: "center",
@@ -800,10 +620,8 @@ export default function PlanSalud() {
                 }}
               >
                 <Pill size={28} style={{ marginBottom: 10 }} />
-
                 <div>
-                  Todavía no hay ningún plan. Sube una receta para
-                  empezar.
+                  Todavía no hay ningún plan. Subí una receta para empezar.
                 </div>
               </div>
             ) : (
@@ -829,7 +647,6 @@ export default function PlanSalud() {
                   >
                     Semana tipo
                   </div>
-
                   <div
                     style={{
                       display: "grid",
@@ -839,10 +656,9 @@ export default function PlanSalud() {
                     }}
                   >
                     <div />
-
-                    {DIAS.map((dia) => (
+                    {DIAS.map((d) => (
                       <div
-                        key={dia}
+                        key={d}
                         style={{
                           textAlign: "center",
                           fontSize: 11,
@@ -851,12 +667,12 @@ export default function PlanSalud() {
                           paddingBottom: 4,
                         }}
                       >
-                        {dia}
+                        {d}
                       </div>
                     ))}
 
-                    {MOMENTOS.map((momento) => (
-                      <React.Fragment key={momento.id}>
+                    {MOMENTOS.map((mo) => (
+                      <React.Fragment key={mo.id}>
                         <div
                           style={{
                             fontSize: 11,
@@ -866,23 +682,17 @@ export default function PlanSalud() {
                             alignItems: "center",
                           }}
                         >
-                          {momento.label}
+                          {mo.label}
                         </div>
-
-                        {DIAS.map((dia) => {
-                          const medsMomento = medicamentos.filter(
-                            (medicamento) =>
-                              (medicamento.momentos || []).includes(
-                                momento.id
-                              )
+                        {DIAS.map((d) => {
+                          const meds = (datos.medicamentos || []).filter((m) =>
+                            m.momentos.includes(mo.id),
                           );
-
                           return (
                             <div
-                              key={`${dia}-${momento.id}`}
+                              key={d + mo.id}
                               style={{
-                                background:
-                                  "rgba(241,238,228,0.06)",
+                                background: "rgba(241,238,228,0.06)",
                                 borderRadius: 8,
                                 minHeight: 40,
                                 display: "flex",
@@ -893,17 +703,15 @@ export default function PlanSalud() {
                                 padding: 4,
                               }}
                             >
-                              {medsMomento.map((medicamento) => (
+                              {meds.map((m) => (
                                 <span
-                                  key={medicamento.id}
-                                  title={medicamento.nombre}
+                                  key={m.id}
+                                  title={m.nombre}
                                   style={{
                                     width: 8,
                                     height: 8,
                                     borderRadius: "50%",
-                                    background: colorPara(
-                                      medicamento.nombre
-                                    ),
+                                    background: colorPara(m.nombre),
                                     display: "inline-block",
                                   }}
                                 />
@@ -918,110 +726,115 @@ export default function PlanSalud() {
 
                 <div
                   style={{
-                    background: "#FFF7E8",
-                    border: "1px solid #D9B98C",
-                    borderRadius: 12,
-                    padding: 14,
-                    marginBottom: 16,
+                    background: "#FFF8EA",
+                    border: "1px solid #D7BE8A",
+                    borderRadius: 16,
+                    padding: 16,
+                    marginBottom: 20,
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    <BellRing
-                      size={20}
-                      color="#B87333"
-                      style={{
-                        marginTop: 2,
-                        flexShrink: 0,
-                      }}
-                    />
-
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <BellRing size={22} color="#B87333" />
                     <div style={{ flex: 1 }}>
                       <div
                         style={{
-                          fontWeight: 600,
-                          fontSize: 14,
+                          fontWeight: 700,
+                          fontSize: 16,
+                          color: "#1E3F35",
                         }}
                       >
-                        Recordatorios del tratamiento
+                        Recordatorios
                       </div>
-
                       <div
                         style={{
-                          fontSize: 12,
+                          fontSize: 13,
                           color: "#6B7A70",
                           marginTop: 3,
-                          lineHeight: 1.5,
                         }}
                       >
-                        Puedes activar notificaciones en el teléfono o
-                        agregar los horarios a Google Calendar.
+                        Elegí alarmas locales del teléfono o eventos de Google
+                        Calendar.
                       </div>
-
-                      <button
-                        onClick={programarAlarmas}
-                        style={{
-                          marginTop: 10,
-                          width: "100%",
-                          padding: "11px 12px",
-                          borderRadius: 9,
-                          border: "none",
-                          background: "#B87333",
-                          color: "white",
-                          fontWeight: 600,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 7,
-                        }}
-                      >
-                        <BellRing size={16} />
-                        Activar alarmas del teléfono
-                      </button>
-
-                      <button
-                        onClick={abrirPrimerEventoGoogleCalendar}
-                        style={{
-                          marginTop: 8,
-                          width: "100%",
-                          padding: "11px 12px",
-                          borderRadius: 9,
-                          border: "1px solid #B87333",
-                          background: "#FFFDF8",
-                          color: "#8A5A3B",
-                          fontWeight: 600,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 7,
-                        }}
-                      >
-                        <CalendarPlus size={16} />
-                        Agregar a Google Calendar
-                      </button>
-
-                      {avisoAlarmas && (
-                        <div
-                          style={{
-                            marginTop: 8,
-                            fontSize: 12,
-                            lineHeight: 1.5,
-                            color:
-                              avisoAlarmas.tipo === "ok"
-                                ? "#276749"
-                                : "#9C4A2E",
-                          }}
-                        >
-                          {avisoAlarmas.texto}
-                        </div>
-                      )}
                     </div>
                   </div>
+
+                  <button
+                    onClick={() =>
+                      setMostrarOpcionesAlarmas((valorActual) => !valorActual)
+                    }
+                    style={{
+                      marginTop: 12,
+                      width: "100%",
+                      padding: "12px 14px",
+                      borderRadius: 10,
+                      border: "none",
+                      background: "#B87333",
+                      color: "white",
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <BellRing size={17} /> Activar o actualizar alarmas
+                  </button>
+
+                  {mostrarOpcionesAlarmas && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 8,
+                        marginTop: 10,
+                      }}
+                    >
+                      <button
+                        onClick={programarAlarmasTelefono}
+                        style={{
+                          padding: "11px 8px",
+                          borderRadius: 10,
+                          border: "1px solid #1E3F35",
+                          background: "#1E3F35",
+                          color: "white",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Alarmas del teléfono
+                      </button>
+
+                      <button
+                        onClick={mostrarEventosGoogleCalendar}
+                        style={{
+                          padding: "11px 8px",
+                          borderRadius: 10,
+                          border: "1px solid #B87333",
+                          background: "transparent",
+                          color: "#8A5A3B",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Google Calendar
+                      </button>
+                    </div>
+                  )}
+
+                  {avisoAlarmas && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 10,
+                        borderRadius: 9,
+                        fontSize: 12.5,
+                        background:
+                          avisoAlarmas.tipo === "ok" ? "#E5F2EA" : "#FCEEE8",
+                        color:
+                          avisoAlarmas.tipo === "ok" ? "#245A43" : "#9C4A2E",
+                      }}
+                    >
+                      {avisoAlarmas.texto}
+                    </div>
+                  )}
                 </div>
 
                 <div
@@ -1042,7 +855,6 @@ export default function PlanSalud() {
                   >
                     Medicamentos
                   </h2>
-
                   <button
                     onClick={agregarMedManual}
                     style={{
@@ -1056,14 +868,13 @@ export default function PlanSalud() {
                       gap: 4,
                     }}
                   >
-                    <Plus size={14} />
-                    Agregar
+                    <Plus size={14} /> Agregar
                   </button>
                 </div>
 
-                {medicamentos.map((medicamento) => (
+                {(datos.medicamentos || []).map((m) => (
                   <div
-                    key={medicamento.id}
+                    key={m.id}
                     style={{
                       background: "#FFFDF8",
                       border: "1px solid #E5DFC9",
@@ -1084,22 +895,17 @@ export default function PlanSalud() {
                           width: 10,
                           height: 10,
                           borderRadius: "50%",
-                          background: colorPara(medicamento.nombre),
+                          background: colorPara(m.nombre),
                           marginTop: 5,
                           flexShrink: 0,
                         }}
                       />
-
                       <div style={{ flex: 1 }}>
-                        {medEditando === medicamento.id ? (
+                        {medEditando === m.id ? (
                           <input
-                            value={medicamento.nombre}
-                            onChange={(evento) =>
-                              actualizarCampoMed(
-                                medicamento.id,
-                                "nombre",
-                                evento.target.value
-                              )
+                            value={m.nombre}
+                            onChange={(e) =>
+                              actualizarCampoMed(m.id, "nombre", e.target.value)
                             }
                             onBlur={() => setMedEditando(null)}
                             autoFocus
@@ -1114,16 +920,14 @@ export default function PlanSalud() {
                           />
                         ) : (
                           <div
-                            onClick={() =>
-                              setMedEditando(medicamento.id)
-                            }
+                            onClick={() => setMedEditando(m.id)}
                             style={{
                               fontWeight: 600,
                               fontSize: 15,
                               color: "#1E3F35",
                             }}
                           >
-                            {medicamento.nombre}
+                            {m.nombre}
                           </div>
                         )}
 
@@ -1134,15 +938,11 @@ export default function PlanSalud() {
                             marginTop: 2,
                           }}
                         >
-                          {medicamento.dosis ||
-                            "Sin dosis especificada"}
-
-                          {medicamento.duracion_dias
-                            ? ` · ${medicamento.duracion_dias} días`
-                            : ""}
+                          {m.dosis || "sin dosis especificada"}
+                          {m.duracion_dias ? ` · ${m.duracion_dias} días` : ""}
                         </div>
 
-                        {medicamento.indicaciones && (
+                        {m.indicaciones && (
                           <div
                             style={{
                               fontSize: 12,
@@ -1151,7 +951,7 @@ export default function PlanSalud() {
                               fontStyle: "italic",
                             }}
                           >
-                            {medicamento.indicaciones}
+                            {m.indicaciones}
                           </div>
                         )}
 
@@ -1159,96 +959,76 @@ export default function PlanSalud() {
                           style={{
                             display: "flex",
                             gap: 6,
-                            flexWrap: "wrap",
                             marginTop: 8,
+                            flexWrap: "wrap",
                           }}
                         >
-                          {MOMENTOS.map((momento) => {
-                            const activo = (
-                              medicamento.momentos || []
-                            ).includes(momento.id);
-
+                          {MOMENTOS.map((mo) => {
+                            const activo = m.momentos.includes(mo.id);
                             return (
                               <button
-                                key={momento.id}
-                                onClick={() =>
-                                  toggleMomento(
-                                    medicamento.id,
-                                    momento.id
-                                  )
-                                }
+                                key={mo.id}
+                                onClick={() => toggleMomento(m.id, mo.id)}
                                 style={{
                                   fontSize: 11,
                                   padding: "4px 10px",
                                   borderRadius: 14,
                                   border: `1px solid ${
-                                    activo
-                                      ? "#1E3F35"
-                                      : "#D8D2BC"
+                                    activo ? "#1E3F35" : "#D8D2BC"
                                   }`,
-                                  background: activo
-                                    ? "#1E3F35"
-                                    : "transparent",
-                                  color: activo
-                                    ? "#F1EEE4"
-                                    : "#8A9A90",
+                                  background: activo ? "#1E3F35" : "transparent",
+                                  color: activo ? "#F1EEE4" : "#8A9A90",
                                   fontWeight: 600,
                                 }}
                               >
-                                {momento.label}
+                                {mo.label}
                               </button>
                             );
                           })}
                         </div>
 
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 6,
-                            flexWrap: "wrap",
-                            marginTop: 8,
-                          }}
-                        >
-                          {(medicamento.momentos || []).map(
-                            (momentoId) => (
-                              <button
-                                key={`calendar-${medicamento.id}-${momentoId}`}
-                                onClick={() =>
-                                  abrirGoogleCalendar(
-                                    medicamento,
-                                    momentoId
-                                  )
-                                }
-                                style={{
-                                  fontSize: 10.5,
-                                  padding: "5px 8px",
-                                  borderRadius: 8,
-                                  border:
-                                    "1px solid #B87333",
-                                  background: "transparent",
-                                  color: "#8A5A3B",
-                                  fontWeight: 600,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 4,
-                                }}
-                              >
-                                <ExternalLink size={12} />
-                                Google Calendar ·{" "}
-                                {
-                                  HORAS_MOMENTO[momentoId]
-                                    ?.label
-                                }
-                              </button>
-                            )
-                          )}
-                        </div>
+                        {mostrarCalendario && (
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              flexWrap: "wrap",
+                              marginTop: 10,
+                            }}
+                          >
+                            {(m.momentos || []).map((momentoId) => {
+                              const horario = HORAS_MOMENTO[momentoId];
+                              if (!horario) return null;
+                              return (
+                                <button
+                                  key={`${m.id}-${momentoId}`}
+                                  onClick={() =>
+                                    abrirGoogleCalendar(m, momentoId)
+                                  }
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 5,
+                                    padding: "6px 9px",
+                                    borderRadius: 9,
+                                    border: "1px solid #B87333",
+                                    background: "transparent",
+                                    color: "#8A5A3B",
+                                    fontSize: 11.5,
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  <ExternalLink size={13} /> Google Calendar ·{" "}
+                                  {horario.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
 
                       <button
-                        onClick={() =>
-                          eliminarMed(medicamento.id)
-                        }
+                        onClick={() => eliminarMed(m.id)}
                         style={{
                           background: "none",
                           border: "none",
@@ -1262,7 +1042,7 @@ export default function PlanSalud() {
                   </div>
                 ))}
 
-                {citas.length > 0 && (
+                {datos.citas && datos.citas.length > 0 && (
                   <>
                     <h2
                       style={{
@@ -1275,9 +1055,9 @@ export default function PlanSalud() {
                       Próximas citas
                     </h2>
 
-                    {citas.map((cita) => (
+                    {datos.citas.map((c) => (
                       <div
-                        key={cita.id}
+                        key={c.id}
                         style={{
                           background: "#FFFDF8",
                           border: "1px solid #E5DFC9",
@@ -1292,12 +1072,8 @@ export default function PlanSalud() {
                         <CalendarClock
                           size={18}
                           color="#B87333"
-                          style={{
-                            marginTop: 2,
-                            flexShrink: 0,
-                          }}
+                          style={{ marginTop: 2, flexShrink: 0 }}
                         />
-
                         <div style={{ flex: 1 }}>
                           <div
                             style={{
@@ -1306,9 +1082,8 @@ export default function PlanSalud() {
                               color: "#1E3F35",
                             }}
                           >
-                            {cita.motivo || "Consulta"}
+                            {c.motivo || "Consulta"}
                           </div>
-
                           <div
                             style={{
                               fontSize: 12,
@@ -1316,14 +1091,13 @@ export default function PlanSalud() {
                               marginTop: 2,
                             }}
                           >
-                            {[cita.fecha, cita.hora, cita.lugar]
+                            {[c.fecha, c.hora, c.lugar]
                               .filter(Boolean)
                               .join(" · ") || "Sin datos"}
                           </div>
                         </div>
-
                         <button
-                          onClick={() => eliminarCita(cita.id)}
+                          onClick={() => eliminarCita(c.id)}
                           style={{
                             background: "none",
                             border: "none",
@@ -1349,17 +1123,10 @@ export default function PlanSalud() {
                     gap: 8,
                   }}
                 >
-                  <Clock
-                    size={16}
-                    style={{
-                      flexShrink: 0,
-                      marginTop: 1,
-                    }}
-                  />
-
+                  <Clock size={16} style={{ flexShrink: 0, marginTop: 1 }} />
                   <span>
-                    Este pastillero es una guía visual y no reemplaza
-                    la indicación médica ni farmacéutica.
+                    Este pastillero es una guía visual, no reemplaza la
+                    indicación médica ni farmacéutica.
                   </span>
                 </div>
               </>
