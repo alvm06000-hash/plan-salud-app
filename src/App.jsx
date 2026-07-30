@@ -19,6 +19,7 @@ import {
   Clock,
   History,
   ExternalLink,
+  FileText,
   Loader2,
   Pill,
   Plus,
@@ -142,6 +143,7 @@ function fechaLocalClave(fecha = new Date()) {
 
 export default function PlanSalud() {
   const [imagenPreview, setImagenPreview] = useState(null);
+  const [archivoSeleccionado, setArchivoSeleccionado] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState(null);
   const [datos, setDatos] = useState(null);
@@ -221,19 +223,38 @@ export default function PlanSalud() {
   async function manejarArchivo(file) {
     if (!file) return;
 
+    const esPdf =
+      file.type === "application/pdf" ||
+      file.name?.toLowerCase().endsWith(".pdf");
+    const esImagen = file.type?.startsWith("image/");
+
+    if (!esPdf && !esImagen) {
+      setError("Formato no compatible. Usa una imagen JPG/PNG/WEBP o un archivo PDF.");
+      return;
+    }
+
+    // El archivo viaja como Base64 dentro de JSON. 15 MB evita superar
+    // el límite de 30 MB del backend después de la conversión.
+    if (file.size > 15 * 1024 * 1024) {
+      setError("El archivo es demasiado grande. El máximo permitido es 15 MB.");
+      return;
+    }
+
     setError(null);
     setCargando(true);
+    setArchivoSeleccionado({ nombre: file.name, esPdf });
 
     try {
       const b64 = await fileToBase64(file);
-      setImagenPreview(URL.createObjectURL(file));
+      setImagenPreview(esPdf ? null : URL.createObjectURL(file));
 
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imagen: b64,
-          mediaType: file.type || "image/jpeg",
+          mediaType: esPdf ? "application/pdf" : file.type || "image/jpeg",
+          nombreArchivo: file.name || (esPdf ? "receta.pdf" : "receta.jpg"),
         }),
       });
 
@@ -270,16 +291,15 @@ export default function PlanSalud() {
 
       await guardar(parsed);
       setVista("horario");
-   } catch (e) {
-  console.error("Error completo al leer receta:", e);
-
-  setError(
-    e?.message ||
-      "No se pudo leer la receta por un error desconocido."
-  );
-} finally {
-  setCargando(false);
-}
+    } catch (e) {
+      console.error("Error completo al leer receta:", e);
+      setError(
+        e?.message ||
+          "No se pudo leer la receta por un error desconocido.",
+      );
+    } finally {
+      setCargando(false);
+    }
   }
 
   function toggleMomento(medId, momentoId) {
@@ -473,7 +493,7 @@ export default function PlanSalud() {
       await guardarDatosNube(sesion.user.id, planFinal);
       await guardarHistorialNube(sesion.user.id, historialFinal);
 
-      setEstadoNube("Datos sincronizados correctamente.");
+      setEstadoNube("Sincronización automática al día.");
     } catch (e) {
       console.error(e);
       setEstadoNube(e.message || "No se pudo sincronizar con la nube.");
@@ -481,6 +501,39 @@ export default function PlanSalud() {
       setSincronizando(false);
     }
   }
+
+  // Sincronización automática: descarga al iniciar sesión y al volver
+  // a tener conexión o regresar a la aplicación. Los cambios locales ya se
+  // suben automáticamente desde guardar() y guardarHistorial().
+  useEffect(() => {
+    if (!sesion?.user?.id || !supabaseConfigurado) return undefined;
+
+    const temporizador = window.setTimeout(() => {
+      sincronizarNube();
+    }, 700);
+
+    return () => window.clearTimeout(temporizador);
+  }, [sesion?.user?.id]);
+
+  useEffect(() => {
+    if (!sesion?.user?.id || !supabaseConfigurado) return undefined;
+
+    const sincronizarSiCorresponde = () => {
+      if (navigator.onLine) sincronizarNube();
+    };
+
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible") sincronizarSiCorresponde();
+    };
+
+    window.addEventListener("online", sincronizarSiCorresponde);
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+
+    return () => {
+      window.removeEventListener("online", sincronizarSiCorresponde);
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+    };
+  }, [sesion?.user?.id, datos, historial]);
 
   async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
@@ -849,8 +902,8 @@ export default function PlanSalud() {
                 marginBottom: 20,
               }}
             >
-              Subí una foto clara de la receta. La transcribo y armo el
-              pastillero con los horarios sugeridos — después podés ajustar
+              Subí una foto o un PDF claro de la receta. La transcribo y armo
+              el pastillero con los horarios sugeridos — después podés ajustar
               cada toma a mano.
             </p>
 
@@ -876,6 +929,13 @@ export default function PlanSalud() {
                     marginBottom: 12,
                   }}
                 />
+              ) : archivoSeleccionado?.esPdf ? (
+                <div style={{ marginBottom: 12 }}>
+                  <FileText size={44} color="#B87333" />
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#6B7A70" }}>
+                    {archivoSeleccionado.nombre}
+                  </div>
+                </div>
               ) : (
                 <Upload
                   size={32}
@@ -890,10 +950,10 @@ export default function PlanSalud() {
                   fontSize: 15,
                 }}
               >
-                {cargando ? "Leyendo la receta..." : "Tocá para subir una foto"}
+                {cargando ? "Leyendo la receta..." : "Tocá para subir una foto o PDF"}
               </div>
               <div style={{ fontSize: 12, color: "#8A9A90", marginTop: 4 }}>
-                JPG o PNG
+                JPG, PNG, WEBP o PDF · máximo 15 MB
               </div>
               {cargando && (
                 <Loader2
@@ -906,7 +966,7 @@ export default function PlanSalud() {
             <input
               ref={fileInput}
               type="file"
-              accept="image/*"
+              accept="image/*,application/pdf,.pdf"
               style={{ display: "none" }}
               onChange={(e) => manejarArchivo(e.target.files?.[0])}
             />
