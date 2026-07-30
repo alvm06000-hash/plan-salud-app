@@ -270,12 +270,12 @@ export default function PlanSalud() {
 
       await guardar(parsed);
       setVista("horario");
-    } catch (e) {
+   } catch (e) {
   console.error("Error completo al leer receta:", e);
 
   setError(
     e?.message ||
-    "No se pudo leer la receta por un error desconocido."
+      "No se pudo leer la receta por un error desconocido."
   );
 } finally {
   setCargando(false);
