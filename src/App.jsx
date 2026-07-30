@@ -271,13 +271,15 @@ export default function PlanSalud() {
       await guardar(parsed);
       setVista("horario");
     } catch (e) {
-      console.error(e);
-      setError(
-        "No se pudo leer la receta. Revisá tu conexión o probá con una foto más nítida.",
-      );
-    } finally {
-      setCargando(false);
-    }
+  console.error("Error completo al leer receta:", e);
+
+  setError(
+    e?.message ||
+    "No se pudo leer la receta por un error desconocido."
+  );
+} finally {
+  setCargando(false);
+}
   }
 
   function toggleMomento(medId, momentoId) {
