@@ -167,3 +167,52 @@ export async function cargarDatosNube(userId) {
     })),
   };
 }
+
+
+export async function crearInvitacionCuidador(relacion = "Familiar") {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("create_caregiver_invite", {
+    p_relationship: relacion || "Familiar",
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function aceptarInvitacionCuidador(codigo) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("accept_caregiver_invite", {
+    p_code: codigo,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function cargarCirculoCuidado() {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("get_care_circle");
+  if (error) throw error;
+  return data || [];
+}
+
+export async function revocarVinculoCuidador(linkId) {
+  verificarCliente();
+  const { error } = await supabase.from("caregiver_links").delete().eq("id", linkId);
+  if (error) throw error;
+}
+
+export async function cargarPacienteCompartido(ownerId) {
+  verificarCliente();
+  const [planResult, historyResult, recipesResult] = await Promise.all([
+    supabase.from("app_state").select("plan_data").eq("user_id", ownerId).maybeSingle(),
+    supabase.from("dose_history").select("id, medication_name, dose, moment_name, status, registered_at, local_date").eq("user_id", ownerId).order("registered_at", { ascending: false }).limit(50),
+    supabase.from("recipe_history").select("id, file_name, prescription_date, read_at, confidence, needs_review, extracted_data").eq("user_id", ownerId).order("read_at", { ascending: false }).limit(20),
+  ]);
+  if (planResult.error) throw planResult.error;
+  if (historyResult.error) throw historyResult.error;
+  if (recipesResult.error) throw recipesResult.error;
+  return {
+    plan: planResult.data?.plan_data || { medicamentos: [], citas: [] },
+    historial: (historyResult.data || []).map((h) => ({ id: h.id, medicamento: h.medication_name, dosis: h.dose, momento: h.moment_name, estado: h.status, fechaHora: h.registered_at, fecha: h.local_date })),
+    recetas: (recipesResult.data || []).map((r) => ({ id: r.id, nombreArchivo: r.file_name, fechaReceta: r.prescription_date, leidaEn: r.read_at, confianza: r.confidence, requiereRevision: r.needs_review, datos: r.extracted_data || {} })),
+  };
+}
