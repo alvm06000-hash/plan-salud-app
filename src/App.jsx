@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { Share } from "@capacitor/share";
 import { supabase, supabaseConfigurado } from "./supabaseClient";
 import {
   cargarDatosNube,
@@ -757,18 +758,54 @@ export default function PlanSalud() {
   }
 
   async function compartirCodigo() {
-    if (!codigoInvitacion) return;
-    const texto = `Te invito a acompañar mi tratamiento en Plan Salud. Código: ${codigoInvitacion}`;
-    try {
-      if (navigator.share) await navigator.share({ title: "Invitación Plan Salud", text: texto });
-      else {
+  if (!codigoInvitacion) return;
+
+  const texto =
+    `Te invito a acompañar mi tratamiento en Mi pastillero semanal.\n\n` +
+    `Código de invitación: ${codigoInvitacion}\n\n` +
+    `Instala la aplicación, crea tu cuenta y entra en Familia → Aceptar una invitación.`;
+
+  try {
+    setMensajeFamilia(null);
+
+    if (Capacitor.isNativePlatform()) {
+      await Share.share({
+        title: "Invitación a mi círculo de cuidado",
+        text: texto,
+        dialogTitle: "Compartir código de invitación",
+      });
+
+      return;
+    }
+
+    if (navigator.share) {
+      await navigator.share({
+        title: "Invitación a mi círculo de cuidado",
+        text: texto,
+      });
+
+      return;
+    }
+
+    await navigator.clipboard.writeText(texto);
+    setMensajeFamilia(
+      "Tu dispositivo no permite abrir el menú de compartir. La invitación fue copiada.",
+    );
+  } catch (e) {
+    if (e?.name !== "AbortError") {
+      console.error("No se pudo compartir la invitación:", e);
+
+      try {
         await navigator.clipboard.writeText(texto);
-        setMensajeFamilia("Invitación copiada al portapapeles.");
+        setMensajeFamilia(
+          "No se pudo abrir el menú de compartir. La invitación fue copiada.",
+        );
+      } catch {
+        setMensajeFamilia("No se pudo compartir ni copiar la invitación.");
       }
-    } catch (e) {
-      if (e?.name !== "AbortError") setMensajeFamilia("No se pudo compartir el código.");
     }
   }
+}
 
   useEffect(() => {
     if (sesion?.user?.id && vista === "familia") actualizarCirculoCuidado();
