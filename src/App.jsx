@@ -1471,7 +1471,27 @@ export default function PlanSalud() {
                         <div style={{ fontWeight: 700, color: "#1E3F35", fontSize: 12.5 }}>{vinculo.otro_email || "Usuario"}</div>
                         <div style={{ color: "#78877E", fontSize: 11.5 }}>{vinculo.rol === "cuidador" ? "Cuidas a esta persona" : "Puede consultar tu plan"} · {vinculo.relacion || "Familiar"} · {vinculo.estado}</div>
                       </div>
-                      {vinculo.rol === "cuidador" && vinculo.estado === "aceptado" && <button onClick={() => verPacienteCompartido(vinculo.owner_id, vinculo.otro_email)} style={{ border: "none", background: "transparent", color: "#1E3F35" }}><Eye size={18} /></button>}
+                      {vinculo.rol === "cuidador" && ["accepted", "aceptado"].includes(String(vinculo.estado || "").toLowerCase()) && (
+                        <button
+                          onClick={() => verPacienteCompartido(vinculo.owner_id, vinculo.otro_email)}
+                          title="Ver panel del paciente"
+                          aria-label="Ver panel del paciente"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 5,
+                            border: "1px solid #1E3F35",
+                            background: "#E8F2ED",
+                            color: "#1E3F35",
+                            borderRadius: 8,
+                            padding: "7px 9px",
+                            fontWeight: 700,
+                            fontSize: 11.5,
+                          }}
+                        >
+                          <Eye size={17} /> Ver panel
+                        </button>
+                      )}
                       <button onClick={() => eliminarVinculoCuidador(vinculo.id)} style={{ border: "none", background: "transparent", color: "#9C4A2E" }}><Trash2 size={17} /></button>
                     </div>
                   ))}
