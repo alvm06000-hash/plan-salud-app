@@ -204,8 +204,8 @@ export async function cargarPacienteCompartido(ownerId) {
   verificarCliente();
   const [planResult, historyResult, recipesResult] = await Promise.all([
     supabase.from("app_state").select("plan_data").eq("user_id", ownerId).maybeSingle(),
-    supabase.from("dose_history").select("id, medication_name, dose, moment_name, status, registered_at, local_date").eq("user_id", ownerId).order("registered_at", { ascending: false }).limit(50),
-    supabase.from("recipe_history").select("id, file_name, prescription_date, read_at, confidence, needs_review, extracted_data").eq("user_id", ownerId).order("read_at", { ascending: false }).limit(20),
+    supabase.from("dose_history").select("id, medication_name, dose, moment_name, status, registered_at, local_date").eq("user_id", ownerId).order("registered_at", { ascending: false }).limit(200),
+    supabase.from("recipe_history").select("id, file_name, prescription_date, read_at, confidence, needs_review, extracted_data").eq("user_id", ownerId).order("read_at", { ascending: false }).limit(50),
   ]);
   if (planResult.error) throw planResult.error;
   if (historyResult.error) throw historyResult.error;
