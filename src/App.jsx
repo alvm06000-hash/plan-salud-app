@@ -9,6 +9,11 @@ import {
   guardarHistorialNube,
   guardarRecetaNube,
   eliminarRecetaNube,
+  crearInvitacionCuidador,
+  aceptarInvitacionCuidador,
+  cargarCirculoCuidado,
+  revocarVinculoCuidador,
+  cargarPacienteCompartido,
 } from "./cloudService";
 import {
   AlertCircle,
@@ -34,10 +39,18 @@ import {
   Trash2,
   Upload,
   X,
+  Users,
+  UserPlus,
+  Copy,
+  ShieldAlert,
+  Share2,
+  Eye,
 } from "lucide-react";
 
 const API_URL =
   "https://plan-salud-server-production.up.railway.app/api/leer-receta";
+const INTERACCIONES_URL =
+  "https://plan-salud-server-production.up.railway.app/api/analizar-interacciones";
 
 const MOMENTOS = [
   { id: "manana", label: "Mañana", sub: "6:00–11:59" },
@@ -171,6 +184,15 @@ export default function PlanSalud() {
   const [authCargando, setAuthCargando] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
   const [estadoNube, setEstadoNube] = useState("");
+  const [analizandoInteracciones, setAnalizandoInteracciones] = useState(false);
+  const [resultadoInteracciones, setResultadoInteracciones] = useState(null);
+  const [circuloCuidado, setCirculoCuidado] = useState([]);
+  const [codigoInvitacion, setCodigoInvitacion] = useState("");
+  const [codigoParaAceptar, setCodigoParaAceptar] = useState("");
+  const [relacionCuidador, setRelacionCuidador] = useState("Familiar");
+  const [mensajeFamilia, setMensajeFamilia] = useState("");
+  const [pacienteCompartido, setPacienteCompartido] = useState(null);
+  const [cargandoFamilia, setCargandoFamilia] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -624,6 +646,134 @@ export default function PlanSalud() {
     };
   }, [sesion?.user?.id, datos, historial, historialRecetas]);
 
+  async function analizarInteracciones() {
+    const medicamentos = (datos?.medicamentos || []).map((m) => ({
+      nombre: m.nombre,
+      dosis: m.dosis || "",
+      indicaciones: m.indicaciones || "",
+    }));
+
+    if (medicamentos.length < 2) {
+      setResultadoInteracciones({
+        nivel_general: "sin_datos",
+        resumen: "Agrega al menos dos medicamentos para realizar la comparación.",
+        interacciones: [],
+        duplicidades: [],
+        advertencias: [],
+      });
+      return;
+    }
+
+    setAnalizandoInteracciones(true);
+    try {
+      const response = await fetch(INTERACCIONES_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ medicamentos }),
+      });
+      const contenido = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(contenido.error || `Error ${response.status}`);
+      setResultadoInteracciones(contenido);
+    } catch (e) {
+      setResultadoInteracciones({
+        nivel_general: "error",
+        resumen: e.message || "No se pudo analizar las interacciones.",
+        interacciones: [],
+        duplicidades: [],
+        advertencias: [],
+      });
+    } finally {
+      setAnalizandoInteracciones(false);
+    }
+  }
+
+  async function actualizarCirculoCuidado() {
+    if (!sesion?.user?.id || !supabaseConfigurado) return;
+    setCargandoFamilia(true);
+    try {
+      const circulo = await cargarCirculoCuidado();
+      setCirculoCuidado(circulo);
+    } catch (e) {
+      setMensajeFamilia(e.message || "No se pudo cargar el círculo de cuidado.");
+    } finally {
+      setCargandoFamilia(false);
+    }
+  }
+
+  async function generarInvitacionCuidador() {
+    if (!sesion?.user?.id) return;
+    setCargandoFamilia(true);
+    setMensajeFamilia("");
+    try {
+      const codigo = await crearInvitacionCuidador(relacionCuidador);
+      setCodigoInvitacion(codigo);
+      setMensajeFamilia("Código creado. Compártelo únicamente con la persona de confianza.");
+      await actualizarCirculoCuidado();
+    } catch (e) {
+      setMensajeFamilia(e.message || "No se pudo crear la invitación.");
+    } finally {
+      setCargandoFamilia(false);
+    }
+  }
+
+  async function aceptarCodigoCuidador() {
+    const codigo = codigoParaAceptar.trim().toUpperCase();
+    if (!codigo) return;
+    setCargandoFamilia(true);
+    setMensajeFamilia("");
+    try {
+      await aceptarInvitacionCuidador(codigo);
+      setCodigoParaAceptar("");
+      setMensajeFamilia("Vínculo aceptado. Ya puedes consultar el plan compartido.");
+      await actualizarCirculoCuidado();
+    } catch (e) {
+      setMensajeFamilia(e.message || "No se pudo aceptar el código.");
+    } finally {
+      setCargandoFamilia(false);
+    }
+  }
+
+  async function verPacienteCompartido(ownerId, ownerEmail) {
+    setCargandoFamilia(true);
+    try {
+      const contenido = await cargarPacienteCompartido(ownerId);
+      setPacienteCompartido({ ...contenido, ownerId, ownerEmail });
+    } catch (e) {
+      setMensajeFamilia(e.message || "No se pudo abrir el plan compartido.");
+    } finally {
+      setCargandoFamilia(false);
+    }
+  }
+
+  async function eliminarVinculoCuidador(linkId) {
+    if (!window.confirm("¿Deseas revocar este acceso compartido?")) return;
+    try {
+      await revocarVinculoCuidador(linkId);
+      setPacienteCompartido(null);
+      await actualizarCirculoCuidado();
+    } catch (e) {
+      setMensajeFamilia(e.message || "No se pudo revocar el acceso.");
+    }
+  }
+
+  async function compartirCodigo() {
+    if (!codigoInvitacion) return;
+    const texto = `Te invito a acompañar mi tratamiento en Plan Salud. Código: ${codigoInvitacion}`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Invitación Plan Salud", text: texto });
+      else {
+        await navigator.clipboard.writeText(texto);
+        setMensajeFamilia("Invitación copiada al portapapeles.");
+      }
+    } catch (e) {
+      if (e?.name !== "AbortError") setMensajeFamilia("No se pudo compartir el código.");
+    }
+  }
+
+  useEffect(() => {
+    if (sesion?.user?.id && vista === "familia") actualizarCirculoCuidado();
+  }, [sesion?.user?.id, vista]);
+
   async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
       setAvisoAlarmas({
@@ -884,9 +1034,10 @@ export default function PlanSalud() {
           display: "flex",
           gap: 8,
           padding: "16px 20px 0",
+          flexWrap: "wrap",
         }}
       >
-        {["subir", "horario", "recetas"].map((v) => (
+        {["subir", "horario", "recetas", "familia"].map((v) => (
           <button
             key={v}
             onClick={() => setVista(v)}
@@ -900,7 +1051,7 @@ export default function PlanSalud() {
               fontWeight: 600,
             }}
           >
-            {v === "subir" ? "Nueva receta" : v === "horario" ? "Mi horario" : "Historial"}
+            {v === "subir" ? "Nueva receta" : v === "horario" ? "Mi horario" : v === "recetas" ? "Historial" : "Familia"}
           </button>
         ))}
       </nav>
@@ -1238,6 +1389,80 @@ export default function PlanSalud() {
           </section>
         )}
 
+
+        {vista === "familia" && (
+          <section>
+            {!sesion ? (
+              <div style={{ padding: 24, borderRadius: 14, background: "#FFFDF8", border: "1px solid #E5DFC9", color: "#5B6B60" }}>
+                Inicia sesión para compartir el seguimiento con un familiar o cuidador.
+              </div>
+            ) : (
+              <>
+                <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#1E3F35", fontWeight: 700 }}>
+                    <Users size={19} /> Círculo de cuidado
+                  </div>
+                  <p style={{ color: "#65756B", fontSize: 12.5, lineHeight: 1.5 }}>
+                    Un cuidador autorizado podrá consultar medicamentos, historial de dosis y recetas. No podrá editar tu tratamiento.
+                  </p>
+                  <label style={{ fontSize: 12, color: "#5B6B60" }}>Relación</label>
+                  <input value={relacionCuidador} onChange={(e) => setRelacionCuidador(e.target.value)} placeholder="Ej.: Hija, esposo, cuidador" style={{ width: "100%", padding: 10, borderRadius: 9, border: "1px solid #D8D2BC", margin: "5px 0 9px" }} />
+                  <button onClick={generarInvitacionCuidador} disabled={cargandoFamilia} style={{ width: "100%", padding: 11, border: "none", borderRadius: 9, background: "#1E3F35", color: "white", fontWeight: 700 }}>
+                    <UserPlus size={16} style={{ verticalAlign: "middle", marginRight: 6 }} /> Crear código de invitación
+                  </button>
+                  {codigoInvitacion && (
+                    <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "#E8F2ED", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: "#5B6B60" }}>Código temporal</div>
+                      <div style={{ fontFamily: "monospace", fontSize: 26, letterSpacing: 4, fontWeight: 800, color: "#1E3F35", margin: "4px 0 8px" }}>{codigoInvitacion}</div>
+                      <button onClick={compartirCodigo} style={{ border: "1px solid #1E3F35", background: "transparent", borderRadius: 8, padding: "7px 12px", color: "#1E3F35", fontWeight: 700 }}>
+                        <Share2 size={15} style={{ verticalAlign: "middle", marginRight: 5 }} /> Compartir
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#1E3F35" }}>Aceptar una invitación</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+                    <input value={codigoParaAceptar} onChange={(e) => setCodigoParaAceptar(e.target.value.toUpperCase())} maxLength={8} placeholder="CÓDIGO" style={{ flex: 1, padding: 10, borderRadius: 9, border: "1px solid #D8D2BC", textTransform: "uppercase", letterSpacing: 2 }} />
+                    <button onClick={aceptarCodigoCuidador} disabled={cargandoFamilia} style={{ padding: "10px 14px", borderRadius: 9, border: "none", background: "#B87333", color: "white", fontWeight: 700 }}>Aceptar</button>
+                  </div>
+                </div>
+
+                {mensajeFamilia && <div style={{ marginBottom: 12, padding: 10, borderRadius: 9, background: "#F6F3EA", color: "#5B6B60", fontSize: 12.5 }}>{mensajeFamilia}</div>}
+
+                <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#1E3F35", marginBottom: 8 }}>Personas vinculadas</div>
+                  {circuloCuidado.length === 0 ? <div style={{ color: "#7B8B81", fontSize: 12.5 }}>Todavía no hay vínculos activos.</div> : circuloCuidado.map((vinculo) => (
+                    <div key={vinculo.id} style={{ display: "flex", gap: 9, alignItems: "center", padding: "10px 0", borderTop: "1px solid #EEE8D8" }}>
+                      <Users size={17} color="#B87333" />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: "#1E3F35", fontSize: 12.5 }}>{vinculo.otro_email || "Usuario"}</div>
+                        <div style={{ color: "#78877E", fontSize: 11.5 }}>{vinculo.rol === "cuidador" ? "Cuidas a esta persona" : "Puede consultar tu plan"} · {vinculo.relacion || "Familiar"} · {vinculo.estado}</div>
+                      </div>
+                      {vinculo.rol === "cuidador" && vinculo.estado === "aceptado" && <button onClick={() => verPacienteCompartido(vinculo.owner_id, vinculo.otro_email)} style={{ border: "none", background: "transparent", color: "#1E3F35" }}><Eye size={18} /></button>}
+                      <button onClick={() => eliminarVinculoCuidador(vinculo.id)} style={{ border: "none", background: "transparent", color: "#9C4A2E" }}><Trash2 size={17} /></button>
+                    </div>
+                  ))}
+                </div>
+
+                {pacienteCompartido && (
+                  <div style={{ marginTop: 14, background: "#1E3F35", color: "#F1EEE4", borderRadius: 14, padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div><strong>Seguimiento de {pacienteCompartido.ownerEmail}</strong><div style={{ fontSize: 11.5, color: "#B8C9C0" }}>Vista de solo lectura</div></div>
+                      <button onClick={() => setPacienteCompartido(null)} style={{ border: "none", background: "transparent", color: "white" }}><X size={18} /></button>
+                    </div>
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      {(pacienteCompartido.plan?.medicamentos || []).map((m) => <div key={m.id} style={{ padding: 9, borderRadius: 9, background: "rgba(255,255,255,.08)" }}><strong>{m.nombre}</strong><div style={{ fontSize: 12, color: "#C8D6CF" }}>{[m.dosis, m.indicaciones].filter(Boolean).join(" · ")}</div></div>)}
+                    </div>
+                    <div style={{ marginTop: 12, fontSize: 12 }}>Últimos registros: {(pacienteCompartido.historial || []).slice(0, 5).map((h) => `${h.medicamento} (${h.estado})`).join(" · ") || "Sin registros"}</div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
         {vista === "horario" && (
           <div>
             {!datos ||
@@ -1466,6 +1691,18 @@ export default function PlanSalud() {
                       {avisoAlarmas.texto}
                     </div>
                   )}
+                </div>
+
+                <div style={{ background: "#FFF8EA", border: "1px solid #D7BE8A", borderRadius: 14, padding: 14, marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#1E3F35" }}><ShieldAlert size={18} color="#B87333" /> Detector de interacciones</div>
+                  <p style={{ fontSize: 12.5, color: "#68776E", lineHeight: 1.45 }}>Compara los medicamentos del plan y señala posibles interacciones o duplicidades. Es una ayuda informativa y debe confirmarse con un médico o farmacéutico.</p>
+                  <button onClick={analizarInteracciones} disabled={analizandoInteracciones} style={{ width: "100%", padding: 10, borderRadius: 9, border: "none", background: "#B87333", color: "white", fontWeight: 700 }}>{analizandoInteracciones ? "Analizando..." : "Analizar medicamentos"}</button>
+                  {resultadoInteracciones && <div style={{ marginTop: 10, padding: 10, borderRadius: 9, background: resultadoInteracciones.nivel_general === "alto" ? "#FCE8E4" : resultadoInteracciones.nivel_general === "moderado" ? "#FFF0D9" : "#E7F2EC", color: "#44564C", fontSize: 12.5 }}>
+                    <strong>{resultadoInteracciones.resumen}</strong>
+                    {(resultadoInteracciones.interacciones || []).map((item, i) => <div key={`int-${i}`} style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(0,0,0,.08)" }}><strong>{item.medicamentos?.join(" + ")}</strong> · {item.nivel}<div>{item.descripcion}</div><div style={{ marginTop: 3 }}><em>Acción:</em> {item.accion}</div></div>)}
+                    {(resultadoInteracciones.duplicidades || []).map((item, i) => <div key={`dup-${i}`} style={{ marginTop: 8 }}><strong>Posible duplicidad:</strong> {item.descripcion}</div>)}
+                    {(resultadoInteracciones.advertencias || []).map((a, i) => <div key={`adv-${i}`} style={{ marginTop: 6 }}>⚠️ {a}</div>)}
+                  </div>}
                 </div>
 
                 <div
