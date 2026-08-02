@@ -3,7 +3,13 @@ import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { supabase, supabaseConfigurado } from "./supabaseClient";
-import { cargarDatosNube, guardarDatosNube, guardarHistorialNube } from "./cloudService";
+import {
+  cargarDatosNube,
+  guardarDatosNube,
+  guardarHistorialNube,
+  guardarRecetaNube,
+  eliminarRecetaNube,
+} from "./cloudService";
 import {
   AlertCircle,
   BarChart3,
@@ -18,6 +24,7 @@ import {
   CircleX,
   Clock,
   History,
+  Search,
   ExternalLink,
   FileText,
   Loader2,
@@ -153,6 +160,10 @@ export default function PlanSalud() {
   const [mostrarOpcionesAlarmas, setMostrarOpcionesAlarmas] = useState(false);
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [historial, setHistorial] = useState([]);
+  const [historialRecetas, setHistorialRecetas] = useState([]);
+  const [busquedaRecetas, setBusquedaRecetas] = useState("");
+  const [fechaFiltroRecetas, setFechaFiltroRecetas] = useState("");
+  const [recetaExpandida, setRecetaExpandida] = useState(null);
   const [sesion, setSesion] = useState(null);
   const [correo, setCorreo] = useState("");
   const [clave, setClave] = useState("");
@@ -176,6 +187,13 @@ export default function PlanSalud() {
         });
         if (historialGuardado?.value) {
           setHistorial(JSON.parse(historialGuardado.value));
+        }
+
+        const recetasGuardadas = await Preferences.get({
+          key: "plan-salud:recetas",
+        });
+        if (recetasGuardadas?.value) {
+          setHistorialRecetas(JSON.parse(recetasGuardadas.value));
         }
       } catch (e) {
         console.error("No se pudieron recuperar los datos guardados", e);
@@ -217,6 +235,41 @@ export default function PlanSalud() {
       }
     } catch (e) {
       console.error("No se pudo guardar el plan", e);
+    }
+  }
+
+  async function guardarRecetaEnHistorial(receta) {
+    const nuevasRecetas = [
+      receta,
+      ...historialRecetas.filter((item) => item.id !== receta.id),
+    ].sort((a, b) => new Date(b.leidaEn) - new Date(a.leidaEn));
+
+    setHistorialRecetas(nuevasRecetas);
+    await Preferences.set({
+      key: "plan-salud:recetas",
+      value: JSON.stringify(nuevasRecetas),
+    });
+
+    if (sesion?.user?.id && supabaseConfigurado) {
+      guardarRecetaNube(sesion.user.id, receta).catch((errorNube) => {
+        console.error("No se pudo guardar la receta en la nube", errorNube);
+      });
+    }
+  }
+
+  async function eliminarRecetaHistorial(recetaId) {
+    const nuevasRecetas = historialRecetas.filter((item) => item.id !== recetaId);
+    setHistorialRecetas(nuevasRecetas);
+    await Preferences.set({
+      key: "plan-salud:recetas",
+      value: JSON.stringify(nuevasRecetas),
+    });
+    if (recetaExpandida === recetaId) setRecetaExpandida(null);
+
+    if (sesion?.user?.id && supabaseConfigurado) {
+      eliminarRecetaNube(sesion.user.id, recetaId).catch((errorNube) => {
+        console.error("No se pudo eliminar la receta de la nube", errorNube);
+      });
     }
   }
 
@@ -282,6 +335,10 @@ export default function PlanSalud() {
             : ["manana"],
         duracion_dias: m.duracion_dias || null,
         indicaciones: m.indicaciones || "",
+        frecuencia_literal: m.frecuencia_literal || null,
+        via: m.via || null,
+        confianza: Number(m.confianza ?? 0),
+        requiere_revision: Boolean(m.requiere_revision),
       }));
 
       parsed.citas = (parsed.citas || []).map((c, i) => ({
@@ -289,7 +346,22 @@ export default function PlanSalud() {
         ...c,
       }));
 
+      const recetaHistorial = {
+        id: `receta-${Date.now()}`,
+        nombreArchivo: file.name || (esPdf ? "receta.pdf" : "receta.jpg"),
+        tipoArchivo: esPdf ? "application/pdf" : file.type || "image/jpeg",
+        medico: parsed.medico || null,
+        paciente: parsed.paciente || null,
+        fechaReceta: parsed.fecha || null,
+        leidaEn: new Date().toISOString(),
+        confianza: Number(parsed.confianza_global ?? 0),
+        requiereRevision: Boolean(parsed.requiere_revision),
+        advertencias: Array.isArray(parsed.advertencias) ? parsed.advertencias : [],
+        datos: parsed,
+      };
+
       await guardar(parsed);
+      await guardarRecetaEnHistorial(recetaHistorial);
       setVista("horario");
     } catch (e) {
       console.error("Error completo al leer receta:", e);
@@ -468,6 +540,7 @@ export default function PlanSalud() {
 
       const planFinal = remoto.plan || datos || { medicamentos: [], citas: [] };
       const historialRemoto = remoto.historial || [];
+      const recetasRemotas = remoto.recetas || [];
       const mapa = new Map();
 
       [...historialRemoto, ...historial].forEach((registro) => {
@@ -478,6 +551,14 @@ export default function PlanSalud() {
         (a, b) => new Date(b.fechaHora) - new Date(a.fechaHora),
       );
 
+      const mapaRecetas = new Map();
+      [...recetasRemotas, ...historialRecetas].forEach((receta) => {
+        mapaRecetas.set(receta.id, receta);
+      });
+      const recetasFinales = [...mapaRecetas.values()].sort(
+        (a, b) => new Date(b.leidaEn) - new Date(a.leidaEn),
+      );
+
       await Preferences.set({
         key: "plan-salud:datos",
         value: JSON.stringify(planFinal),
@@ -486,12 +567,20 @@ export default function PlanSalud() {
         key: "plan-salud:historial",
         value: JSON.stringify(historialFinal),
       });
+      await Preferences.set({
+        key: "plan-salud:recetas",
+        value: JSON.stringify(recetasFinales),
+      });
 
       setDatos(planFinal);
       setHistorial(historialFinal);
+      setHistorialRecetas(recetasFinales);
 
       await guardarDatosNube(sesion.user.id, planFinal);
       await guardarHistorialNube(sesion.user.id, historialFinal);
+      await Promise.all(
+        recetasFinales.map((receta) => guardarRecetaNube(sesion.user.id, receta)),
+      );
 
       setEstadoNube("Sincronización automática al día.");
     } catch (e) {
@@ -533,7 +622,7 @@ export default function PlanSalud() {
       window.removeEventListener("online", sincronizarSiCorresponde);
       document.removeEventListener("visibilitychange", alCambiarVisibilidad);
     };
-  }, [sesion?.user?.id, datos, historial]);
+  }, [sesion?.user?.id, datos, historial, historialRecetas]);
 
   async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
@@ -701,6 +790,13 @@ export default function PlanSalud() {
 
   const hoy = fechaLocalClave();
   const historialHoy = historial.filter((registro) => registro.fecha === hoy);
+  const recetasFiltradas = historialRecetas.filter((receta) => {
+    const texto = `${receta.nombreArchivo || ""} ${receta.medico || ""} ${receta.paciente || ""} ${(receta.datos?.medicamentos || []).map((m) => m.nombre).join(" ")}`.toLowerCase();
+    const coincideTexto = texto.includes(busquedaRecetas.trim().toLowerCase());
+    const fechaLectura = receta.leidaEn ? fechaLocalClave(new Date(receta.leidaEn)) : "";
+    const coincideFecha = !fechaFiltroRecetas || fechaLectura === fechaFiltroRecetas;
+    return coincideTexto && coincideFecha;
+  });
   const tomadasHoy = historialHoy.filter((registro) => registro.estado === "tomado").length;
   const omitidasHoy = historialHoy.filter((registro) => registro.estado === "omitido").length;
   const totalRegistradas = historial.length;
@@ -790,7 +886,7 @@ export default function PlanSalud() {
           padding: "16px 20px 0",
         }}
       >
-        {["subir", "horario"].map((v) => (
+        {["subir", "horario", "recetas"].map((v) => (
           <button
             key={v}
             onClick={() => setVista(v)}
@@ -804,7 +900,7 @@ export default function PlanSalud() {
               fontWeight: 600,
             }}
           >
-            {v === "subir" ? "Nueva receta" : "Mi horario"}
+            {v === "subir" ? "Nueva receta" : v === "horario" ? "Mi horario" : "Historial"}
           </button>
         ))}
       </nav>
@@ -1010,6 +1106,136 @@ export default function PlanSalud() {
               <Plus size={16} /> O cargar un medicamento manualmente
             </button>
           </div>
+        )}
+
+
+        {vista === "recetas" && (
+          <section>
+            <div
+              style={{
+                background: "#FFFDF8",
+                border: "1px solid #E5DFC9",
+                borderRadius: 14,
+                padding: 14,
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#1E3F35" }}>
+                <History size={18} /> Historial de recetas
+              </div>
+              <div style={{ fontSize: 12.5, color: "#6B7A70", marginTop: 5 }}>
+                {historialRecetas.length} receta{historialRecetas.length === 1 ? "" : "s"} guardada{historialRecetas.length === 1 ? "" : "s"} localmente y en la nube.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 150px", gap: 8, marginTop: 12 }}>
+                <div style={{ position: "relative" }}>
+                  <Search size={15} style={{ position: "absolute", left: 10, top: 11, color: "#7B8B81" }} />
+                  <input
+                    value={busquedaRecetas}
+                    onChange={(e) => setBusquedaRecetas(e.target.value)}
+                    placeholder="Buscar medicamento, médico o archivo"
+                    style={{ width: "100%", padding: "10px 10px 10px 32px", borderRadius: 9, border: "1px solid #D8D2BC" }}
+                  />
+                </div>
+                <input
+                  type="date"
+                  value={fechaFiltroRecetas}
+                  onChange={(e) => setFechaFiltroRecetas(e.target.value)}
+                  style={{ padding: 10, borderRadius: 9, border: "1px solid #D8D2BC" }}
+                />
+              </div>
+              {(busquedaRecetas || fechaFiltroRecetas) && (
+                <button
+                  onClick={() => { setBusquedaRecetas(""); setFechaFiltroRecetas(""); }}
+                  style={{ marginTop: 8, border: "none", background: "transparent", color: "#8A5A3B", fontWeight: 600, fontSize: 12 }}
+                >
+                  Limpiar filtros
+                </button>
+              )}
+            </div>
+
+            {recetasFiltradas.length === 0 ? (
+              <div style={{ padding: 28, textAlign: "center", color: "#7B8B81" }}>
+                <FileText size={28} style={{ marginBottom: 8 }} />
+                <div>No se encontraron recetas.</div>
+              </div>
+            ) : (
+              recetasFiltradas.map((receta) => {
+                const abierta = recetaExpandida === receta.id;
+                const medicamentosReceta = receta.datos?.medicamentos || [];
+                return (
+                  <article
+                    key={receta.id}
+                    style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 13, padding: 14, marginBottom: 10 }}
+                  >
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <FileText size={20} color="#B87333" style={{ marginTop: 2, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: "#1E3F35", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {receta.nombreArchivo || "Receta médica"}
+                        </div>
+                        <div style={{ color: "#6B7A70", fontSize: 12, marginTop: 3 }}>
+                          {new Date(receta.leidaEn).toLocaleString()} · {medicamentosReceta.length} medicamento{medicamentosReceta.length === 1 ? "" : "s"}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                          <span style={{ fontSize: 11, padding: "4px 7px", borderRadius: 20, background: receta.requiereRevision ? "#FCEEE8" : "#E5F2EA", color: receta.requiereRevision ? "#9C4A2E" : "#245A43" }}>
+                            {receta.requiereRevision ? "Requiere revisión" : "Lectura verificada"}
+                          </span>
+                          {Number.isFinite(Number(receta.confianza)) && (
+                            <span style={{ fontSize: 11, padding: "4px 7px", borderRadius: 20, background: "#F1EEE4", color: "#5B6B60" }}>
+                              Confianza: {Math.round(Number(receta.confianza))}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button onClick={() => eliminarRecetaHistorial(receta.id)} aria-label="Eliminar receta" style={{ border: "none", background: "transparent", color: "#B87333", padding: 4 }}>
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => setRecetaExpandida(abierta ? null : receta.id)}
+                      style={{ width: "100%", marginTop: 10, padding: 8, borderRadius: 8, border: "1px solid #D8D2BC", background: "transparent", color: "#1E3F35", fontWeight: 600 }}
+                    >
+                      {abierta ? "Ocultar detalles" : "Ver detalles"}
+                    </button>
+
+                    {abierta && (
+                      <div style={{ marginTop: 12, borderTop: "1px solid #E5DFC9", paddingTop: 12, fontSize: 12.5, color: "#45574D" }}>
+                        <div><strong>Médico:</strong> {receta.medico || "No identificado"}</div>
+                        <div style={{ marginTop: 4 }}><strong>Paciente:</strong> {receta.paciente || "No identificado"}</div>
+                        <div style={{ marginTop: 4 }}><strong>Fecha de receta:</strong> {receta.fechaReceta || "No identificada"}</div>
+                        {receta.advertencias?.length > 0 && (
+                          <div style={{ marginTop: 10, padding: 9, borderRadius: 8, background: "#FCEEE8", color: "#8D422C" }}>
+                            <strong>Datos por revisar:</strong>
+                            <ul style={{ margin: "5px 0 0", paddingLeft: 18 }}>
+                              {receta.advertencias.map((aviso, i) => <li key={`${receta.id}-aviso-${i}`}>{aviso}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 10, display: "grid", gap: 7 }}>
+                          {medicamentosReceta.map((med, i) => (
+                            <div key={`${receta.id}-med-${i}`} style={{ padding: 9, borderRadius: 8, background: "#F6F3EA" }}>
+                              <strong>{med.nombre || "Medicamento"}</strong>
+                              <div>{[med.dosis, med.frecuencia_literal, med.indicaciones].filter(Boolean).join(" · ") || "Sin indicaciones legibles"}</div>
+                              {Number.isFinite(Number(med.confianza)) && <div style={{ marginTop: 3, color: "#718077" }}>Confianza: {Math.round(Number(med.confianza))}%</div>}
+                            </div>
+                          ))}
+                        </div>
+                        {receta.datos?.transcripcion_literal && (
+                          <details style={{ marginTop: 10 }}>
+                            <summary style={{ cursor: "pointer", fontWeight: 600 }}>Transcripción literal</summary>
+                            <div style={{ whiteSpace: "pre-wrap", marginTop: 7, padding: 9, background: "#F6F3EA", borderRadius: 8 }}>
+                              {receta.datos.transcripcion_literal}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            )}
+          </section>
         )}
 
         {vista === "horario" && (
