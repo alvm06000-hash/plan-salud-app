@@ -194,6 +194,7 @@ export default function PlanSalud() {
   const [mensajeFamilia, setMensajeFamilia] = useState("");
   const [pacienteCompartido, setPacienteCompartido] = useState(null);
   const [cargandoFamilia, setCargandoFamilia] = useState(false);
+  const [actualizadoCuidadorEn, setActualizadoCuidadorEn] = useState(null);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -734,15 +735,17 @@ export default function PlanSalud() {
     }
   }
 
-  async function verPacienteCompartido(ownerId, ownerEmail) {
-    setCargandoFamilia(true);
+  async function verPacienteCompartido(ownerId, ownerEmail, silencioso = false) {
+    if (!silencioso) setCargandoFamilia(true);
     try {
       const contenido = await cargarPacienteCompartido(ownerId);
       setPacienteCompartido({ ...contenido, ownerId, ownerEmail });
+      setActualizadoCuidadorEn(new Date());
+      if (!silencioso) setMensajeFamilia("Panel del cuidador actualizado.");
     } catch (e) {
-      setMensajeFamilia(e.message || "No se pudo abrir el plan compartido.");
+      if (!silencioso) setMensajeFamilia(e.message || "No se pudo abrir el plan compartido.");
     } finally {
-      setCargandoFamilia(false);
+      if (!silencioso) setCargandoFamilia(false);
     }
   }
 
@@ -758,58 +761,49 @@ export default function PlanSalud() {
   }
 
   async function compartirCodigo() {
-  if (!codigoInvitacion) return;
+    if (!codigoInvitacion) return;
 
-  const texto =
-    `Te invito a acompañar mi tratamiento en Mi pastillero semanal.\n\n` +
-    `Código de invitación: ${codigoInvitacion}\n\n` +
-    `Instala la aplicación, crea tu cuenta y entra en Familia → Aceptar una invitación.`;
+    const texto =
+      `Te invito a acompañar mi tratamiento en Mi pastillero semanal.\n\n` +
+      `Código de invitación: ${codigoInvitacion}\n\n` +
+      `Instala la aplicación, crea tu cuenta y entra en Familia → Aceptar una invitación.`;
 
-  try {
-    setMensajeFamilia(null);
-
-    if (Capacitor.isNativePlatform()) {
-      await Share.share({
-        title: "Invitación a mi círculo de cuidado",
-        text: texto,
-        dialogTitle: "Compartir código de invitación",
-      });
-
-      return;
-    }
-
-    if (navigator.share) {
-      await navigator.share({
-        title: "Invitación a mi círculo de cuidado",
-        text: texto,
-      });
-
-      return;
-    }
-
-    await navigator.clipboard.writeText(texto);
-    setMensajeFamilia(
-      "Tu dispositivo no permite abrir el menú de compartir. La invitación fue copiada.",
-    );
-  } catch (e) {
-    if (e?.name !== "AbortError") {
-      console.error("No se pudo compartir la invitación:", e);
-
-      try {
-        await navigator.clipboard.writeText(texto);
-        setMensajeFamilia(
-          "No se pudo abrir el menú de compartir. La invitación fue copiada.",
-        );
-      } catch {
-        setMensajeFamilia("No se pudo compartir ni copiar la invitación.");
+    try {
+      setMensajeFamilia("");
+      if (Capacitor.isNativePlatform()) {
+        await Share.share({
+          title: "Invitación a mi círculo de cuidado",
+          text: texto,
+          dialogTitle: "Compartir código de invitación",
+        });
+        return;
       }
+      if (navigator.share) {
+        await navigator.share({ title: "Invitación a mi círculo de cuidado", text: texto });
+        return;
+      }
+      await navigator.clipboard.writeText(texto);
+      setMensajeFamilia("Invitación copiada al portapapeles.");
+    } catch (e) {
+      if (e?.name !== "AbortError") setMensajeFamilia("No se pudo compartir el código.");
     }
   }
-}
 
   useEffect(() => {
     if (sesion?.user?.id && vista === "familia") actualizarCirculoCuidado();
   }, [sesion?.user?.id, vista]);
+
+  useEffect(() => {
+    if (vista !== "familia" || !pacienteCompartido?.ownerId) return undefined;
+    const id = window.setInterval(() => {
+      verPacienteCompartido(
+        pacienteCompartido.ownerId,
+        pacienteCompartido.ownerEmail,
+        true,
+      );
+    }, 30000);
+    return () => window.clearInterval(id);
+  }, [vista, pacienteCompartido?.ownerId]);
 
   async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
@@ -1483,18 +1477,70 @@ export default function PlanSalud() {
                   ))}
                 </div>
 
-                {pacienteCompartido && (
-                  <div style={{ marginTop: 14, background: "#1E3F35", color: "#F1EEE4", borderRadius: 14, padding: 14 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div><strong>Seguimiento de {pacienteCompartido.ownerEmail}</strong><div style={{ fontSize: 11.5, color: "#B8C9C0" }}>Vista de solo lectura</div></div>
-                      <button onClick={() => setPacienteCompartido(null)} style={{ border: "none", background: "transparent", color: "white" }}><X size={18} /></button>
+                {pacienteCompartido && (() => {
+                  const registros = pacienteCompartido.historial || [];
+                  const medicamentos = pacienteCompartido.plan?.medicamentos || [];
+                  const recetas = pacienteCompartido.recetas || [];
+                  const hace7Dias = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                  const ultimos7 = registros.filter((r) => new Date(r.fechaHora).getTime() >= hace7Dias);
+                  const tomadas7 = ultimos7.filter((r) => r.estado === "tomado").length;
+                  const omitidas7 = ultimos7.filter((r) => r.estado === "omitido").length;
+                  const cumplimiento7 = ultimos7.length ? Math.round((tomadas7 / ultimos7.length) * 100) : 0;
+                  const omisionesRecientes = registros.filter((r) => r.estado === "omitido").slice(0, 5);
+
+                  return (
+                    <div style={{ marginTop: 14, background: "#1E3F35", color: "#F1EEE4", borderRadius: 16, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                        <div>
+                          <strong>Panel de {pacienteCompartido.ownerEmail}</strong>
+                          <div style={{ fontSize: 11.5, color: "#B8C9C0", marginTop: 2 }}>
+                            Solo lectura · actualización automática cada 30 segundos
+                          </div>
+                          {actualizadoCuidadorEn && <div style={{ fontSize: 10.5, color: "#91B3A4", marginTop: 2 }}>Actualizado {actualizadoCuidadorEn.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>}
+                        </div>
+                        <div style={{ display: "flex", gap: 5 }}>
+                          <button onClick={() => verPacienteCompartido(pacienteCompartido.ownerId, pacienteCompartido.ownerEmail)} disabled={cargandoFamilia} title="Actualizar" style={{ border: "none", background: "rgba(255,255,255,.08)", borderRadius: 8, padding: 7, color: "white" }}><RefreshCw size={17} /></button>
+                          <button onClick={() => setPacienteCompartido(null)} style={{ border: "none", background: "transparent", color: "white" }}><X size={18} /></button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, marginTop: 13 }}>
+                        {[
+                          ["Cumplimiento 7 días", `${cumplimiento7}%`],
+                          ["Medicamentos", medicamentos.length],
+                          ["Dosis tomadas", tomadas7],
+                          ["Dosis omitidas", omitidas7],
+                        ].map(([label, value]) => <div key={label} style={{ background: "rgba(255,255,255,.08)", padding: 10, borderRadius: 10 }}><div style={{ fontSize: 10.5, color: "#AFC5BA" }}>{label}</div><div style={{ fontSize: 22, fontFamily: "'Fraunces', serif", marginTop: 2 }}>{value}</div></div>)}
+                      </div>
+
+                      {omisionesRecientes.length > 0 && <div style={{ marginTop: 12, padding: 11, borderRadius: 10, background: "#5B342C", border: "1px solid #9C604C" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}><AlertCircle size={17} /> Alertas recientes</div>
+                        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                          {omisionesRecientes.map((h) => <div key={h.id} style={{ fontSize: 11.5 }}><strong>{h.medicamento}</strong> · {h.momento || "Horario"} · omitida {new Date(h.fechaHora).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>)}
+                        </div>
+                      </div>}
+
+                      <div style={{ marginTop: 14, fontWeight: 700 }}>Medicamentos actuales</div>
+                      <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                        {medicamentos.length === 0 ? <div style={{ fontSize: 12, color: "#B8C9C0" }}>No hay medicamentos registrados.</div> : medicamentos.map((m) => <div key={m.id} style={{ padding: 9, borderRadius: 9, background: "rgba(255,255,255,.08)" }}><strong>{m.nombre}</strong><div style={{ fontSize: 12, color: "#C8D6CF", marginTop: 2 }}>{[m.dosis, m.indicaciones].filter(Boolean).join(" · ") || "Sin indicaciones"}</div><div style={{ fontSize: 10.5, color: "#9EB5AA", marginTop: 3 }}>{(m.momentos || []).map((id) => MOMENTOS.find((x) => x.id === id)?.label).filter(Boolean).join(" · ") || "Sin horario"}</div></div>)}
+                      </div>
+
+                      <div style={{ marginTop: 14, fontWeight: 700 }}>Actividad reciente</div>
+                      <div style={{ marginTop: 7, display: "grid", gap: 6 }}>
+                        {registros.slice(0, 8).map((h) => <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, background: "rgba(255,255,255,.05)", borderRadius: 8, padding: 8 }}>{h.estado === "tomado" ? <CheckCircle2 size={15} color="#78C49A" /> : <CircleX size={15} color="#E59A7B" />}<span style={{ flex: 1 }}><strong>{h.medicamento}</strong> · {h.momento || "Horario"}</span><span style={{ color: "#AFC5BA", fontSize: 10.5 }}>{new Date(h.fechaHora).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span></div>)}
+                        {registros.length === 0 && <div style={{ fontSize: 12, color: "#B8C9C0" }}>Todavía no hay dosis registradas.</div>}
+                      </div>
+
+                      <div style={{ marginTop: 14, fontWeight: 700 }}>Recetas compartidas</div>
+                      <div style={{ marginTop: 7, display: "grid", gap: 6 }}>
+                        {recetas.slice(0, 5).map((r) => <div key={r.id} style={{ padding: 9, borderRadius: 8, background: "rgba(255,255,255,.05)" }}><div style={{ display: "flex", gap: 7, alignItems: "center" }}><FileText size={15} /><strong style={{ fontSize: 11.5 }}>{r.nombreArchivo || "Receta"}</strong></div><div style={{ fontSize: 10.5, color: "#AFC5BA", marginTop: 3 }}>{r.fechaReceta || new Date(r.leidaEn).toLocaleDateString()} · Confianza {r.confianza ?? "—"}%{r.requiereRevision ? " · Requiere revisión" : ""}</div></div>)}
+                        {recetas.length === 0 && <div style={{ fontSize: 12, color: "#B8C9C0" }}>No hay recetas compartidas.</div>}
+                      </div>
+
+                      <div style={{ marginTop: 13, padding: 9, background: "rgba(255,255,255,.06)", borderRadius: 9, color: "#B8C9C0", fontSize: 10.5, lineHeight: 1.45 }}>Este panel ayuda al seguimiento familiar. Ante omisiones repetidas o dudas sobre el tratamiento, comunícate con el paciente y consulta a un profesional de salud. No modifiques medicamentos desde esta vista.</div>
                     </div>
-                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                      {(pacienteCompartido.plan?.medicamentos || []).map((m) => <div key={m.id} style={{ padding: 9, borderRadius: 9, background: "rgba(255,255,255,.08)" }}><strong>{m.nombre}</strong><div style={{ fontSize: 12, color: "#C8D6CF" }}>{[m.dosis, m.indicaciones].filter(Boolean).join(" · ")}</div></div>)}
-                    </div>
-                    <div style={{ marginTop: 12, fontSize: 12 }}>Últimos registros: {(pacienteCompartido.historial || []).slice(0, 5).map((h) => `${h.medicamento} (${h.estado})`).join(" · ") || "Sin registros"}</div>
-                  </div>
-                )}
+                  );
+                })()}
               </>
             )}
           </section>
