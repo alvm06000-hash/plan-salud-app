@@ -15,6 +15,10 @@ import {
   cargarCirculoCuidado,
   revocarVinculoCuidador,
   cargarPacienteCompartido,
+  crearAlertaDosisPendiente,
+  resolverAlertasDosis,
+  cargarAlertasCuidado,
+  marcarAlertaCuidadoLeida,
 } from "./cloudService";
 import {
   AlertCircle,
@@ -200,6 +204,10 @@ export default function PlanSalud() {
   const [cargandoFamilia, setCargandoFamilia] = useState(false);
   const [actualizadoCuidadorEn, setActualizadoCuidadorEn] = useState(null);
   const [mostrarDetallesEstadisticas, setMostrarDetallesEstadisticas] = useState(false);
+  const [alertasCuidado, setAlertasCuidado] = useState([]);
+  const [cargandoAlertas, setCargandoAlertas] = useState(false);
+  const [minutosAvisoCuidador, setMinutosAvisoCuidador] = useState(30);
+  const [mostrarHistorialAlertas, setMostrarHistorialAlertas] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -224,6 +232,9 @@ export default function PlanSalud() {
         if (recetasGuardadas?.value) {
           setHistorialRecetas(JSON.parse(recetasGuardadas.value));
         }
+
+        const demoraGuardada = await Preferences.get({ key: "plan-salud:demora-cuidador" });
+        if (demoraGuardada?.value) setMinutosAvisoCuidador(Number(demoraGuardada.value) || 30);
       } catch (e) {
         console.error("No se pudieron recuperar los datos guardados", e);
       }
@@ -487,6 +498,74 @@ export default function PlanSalud() {
     }
   }
 
+  function fechaProgramadaPara(momentoId, fechaBase = new Date()) {
+    const horario = HORAS_MOMENTO[momentoId] || HORAS_MOMENTO.noche;
+    const fecha = new Date(fechaBase);
+    fecha.setHours(horario.hora, horario.minuto, 0, 0);
+    return fecha;
+  }
+
+  async function actualizarAlertasCuidado({ notificar = false } = {}) {
+    if (!sesion?.user?.id || !supabaseConfigurado) return;
+    setCargandoAlertas(true);
+    try {
+      const nuevas = await cargarAlertasCuidado(150);
+      setAlertasCuidado(nuevas);
+
+      if (notificar && Capacitor.isNativePlatform()) {
+        const guardadas = await Preferences.get({ key: "plan-salud:alertas-notificadas" });
+        const idsNotificados = new Set(guardadas?.value ? JSON.parse(guardadas.value) : []);
+        const pendientes = nuevas.filter((a) => a.caregiver_id === sesion.user.id && a.status === "active" && !idsNotificados.has(a.id));
+        if (pendientes.length) {
+          const permiso = await LocalNotifications.requestPermissions();
+          if (permiso.display === "granted") {
+            await LocalNotifications.schedule({ notifications: pendientes.slice(0, 5).map((a, i) => ({
+              id: hashId(`alerta-cuidador-${a.id}`),
+              title: "Alerta del círculo de cuidado",
+              body: a.message,
+              schedule: { at: new Date(Date.now() + 1200 + i * 500) },
+              extra: { alertId: a.id, ownerId: a.owner_id },
+            })) });
+          }
+          pendientes.forEach((a) => idsNotificados.add(a.id));
+          await Preferences.set({ key: "plan-salud:alertas-notificadas", value: JSON.stringify([...idsNotificados].slice(-500)) });
+        }
+      }
+    } catch (e) {
+      console.error("No se pudieron cargar las alertas de cuidado", e);
+    } finally {
+      setCargandoAlertas(false);
+    }
+  }
+
+  async function evaluarDosisPendientes() {
+    if (!sesion?.user?.id || !datos?.medicamentos?.length || !supabaseConfigurado) return;
+    const ahora = new Date();
+    const hoy = fechaLocalClave(ahora);
+    for (const med of datos.medicamentos) {
+      for (const momentoId of med.momentos || []) {
+        const programada = fechaProgramadaPara(momentoId, ahora);
+        const vencimiento = new Date(programada.getTime() + minutosAvisoCuidador * 60 * 1000);
+        if (ahora < vencimiento) continue;
+        const yaRegistrada = historial.some((r) => r.fecha === hoy && r.medicamentoId === med.id && r.momentoId === momentoId);
+        if (yaRegistrada) continue;
+        try {
+          await crearAlertaDosisPendiente({
+            medicationId: med.id, medicationName: med.nombre, dose: med.dosis || "",
+            momentId: momentoId, momentName: MOMENTOS.find((m) => m.id === momentoId)?.label || momentoId,
+            scheduledAt: programada.toISOString(), localDate: hoy, alertType: "missed",
+          });
+        } catch (e) { console.error("No se pudo crear alerta pendiente", e); }
+      }
+    }
+  }
+
+  async function cambiarDemoraCuidador(valor) {
+    const minutos = Number(valor) || 30;
+    setMinutosAvisoCuidador(minutos);
+    await Preferences.set({ key: "plan-salud:demora-cuidador", value: String(minutos) });
+  }
+
   async function registrarDosis(medicamento, estado) {
     const ahora = new Date();
     const momentoId = momentoCercano();
@@ -500,9 +579,23 @@ export default function PlanSalud() {
       estado,
       fecha: fechaLocalClave(ahora),
       fechaHora: ahora.toISOString(),
+      fechaProgramada: fechaProgramadaPara(momentoId, ahora).toISOString(),
     };
 
     await guardarHistorial([registro, ...historial].slice(0, 500));
+    if (sesion?.user?.id && supabaseConfigurado) {
+      try {
+        if (estado === "tomado") {
+          await resolverAlertasDosis({ medicationId: medicamento.id, momentId, localDate: registro.fecha });
+        } else {
+          await crearAlertaDosisPendiente({
+            medicationId: medicamento.id, medicationName: medicamento.nombre, dose: medicamento.dosis || "",
+            momentId, momentName: registro.momento, scheduledAt: registro.fechaProgramada,
+            localDate: registro.fecha, alertType: "omitted",
+          });
+        }
+      } catch (e) { console.error("No se pudo actualizar la alerta del cuidador", e); }
+    }
     setAvisoAlarmas({
       tipo: "ok",
       texto:
@@ -797,6 +890,17 @@ export default function PlanSalud() {
   useEffect(() => {
     if (sesion?.user?.id && vista === "familia") actualizarCirculoCuidado();
   }, [sesion?.user?.id, vista]);
+
+  useEffect(() => {
+    if (!sesion?.user?.id) return undefined;
+    actualizarAlertasCuidado({ notificar: true });
+    evaluarDosisPendientes();
+    const id = window.setInterval(() => {
+      actualizarAlertasCuidado({ notificar: true });
+      evaluarDosisPendientes();
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, [sesion?.user?.id, datos, historial, minutosAvisoCuidador]);
 
   useEffect(() => {
     if (vista !== "familia" || !pacienteCompartido?.ownerId) return undefined;
@@ -1541,6 +1645,33 @@ export default function PlanSalud() {
                 </div>
 
                 {mensajeFamilia && <div style={{ marginBottom: 12, padding: 10, borderRadius: 9, background: "#F6F3EA", color: "#5B6B60", fontSize: 12.5 }}>{mensajeFamilia}</div>}
+
+                <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700, color: "#1E3F35" }}><BellRing size={18} /> Centro de alertas</div>
+                    <button onClick={() => actualizarAlertasCuidado({ notificar: false })} disabled={cargandoAlertas} style={{ border: "none", background: "#E8F2ED", color: "#1E3F35", borderRadius: 8, padding: 7 }}><RefreshCw size={16} /></button>
+                  </div>
+                  <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <label style={{ color: "#65756B", fontSize: 12 }}>Avisar al cuidador después de</label>
+                    <select value={minutosAvisoCuidador} onChange={(e) => cambiarDemoraCuidador(e.target.value)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #D8D2BC", background: "white", color: "#1E3F35" }}>
+                      <option value={10}>10 minutos</option><option value={30}>30 minutos</option><option value={60}>60 minutos</option>
+                    </select>
+                  </div>
+                  {(() => {
+                    const propias = alertasCuidado.filter((a) => a.caregiver_id === sesion.user.id);
+                    const activas = propias.filter((a) => a.status === "active");
+                    const visibles = mostrarHistorialAlertas ? propias : activas.slice(0, 4);
+                    return <div style={{ marginTop: 11 }}>
+                      {visibles.length === 0 ? <div style={{ padding: 10, borderRadius: 9, background: "#F4F6F1", color: "#718078", fontSize: 12 }}>No hay alertas pendientes.</div> : <div style={{ display: "grid", gap: 7 }}>{visibles.map((a) => <button key={a.id} onClick={async () => { if (!a.read_at) { await marcarAlertaCuidadoLeida(a.id); actualizarAlertasCuidado(); } }} style={{ textAlign: "left", border: "1px solid #E9D5CD", borderRadius: 9, padding: 9, background: a.status === "active" ? "#FFF0EB" : "#F5F5F1", color: "#5A4038" }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", fontWeight: 700, fontSize: 12 }}><AlertCircle size={15} /> {a.medication_name}</div>
+                        <div style={{ marginTop: 3, fontSize: 11.5, lineHeight: 1.4 }}>{a.message}</div>
+                        <div style={{ marginTop: 4, color: "#8B756C", fontSize: 10.5 }}>{new Date(a.created_at).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {a.status === "active" ? "Pendiente" : "Resuelta"}</div>
+                      </button>)}</div>}
+                      {propias.length > 4 && <button onClick={() => setMostrarHistorialAlertas((v) => !v)} style={{ marginTop: 8, width: "100%", border: "none", background: "transparent", color: "#B87333", fontWeight: 700 }}>{mostrarHistorialAlertas ? "Ocultar historial" : `Ver historial (${propias.length})`}</button>}
+                    </div>;
+                  })()}
+                  <div style={{ marginTop: 9, color: "#7B8B81", fontSize: 10.5, lineHeight: 1.4 }}>Las alertas se revisan cada minuto mientras la aplicación está abierta. La notificación push con la aplicación completamente cerrada requerirá Firebase Cloud Messaging en la siguiente actualización técnica.</div>
+                </div>
 
                 <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14 }}>
                   <div style={{ fontWeight: 700, color: "#1E3F35", marginBottom: 8 }}>Personas vinculadas</div>
