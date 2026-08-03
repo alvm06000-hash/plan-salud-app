@@ -21,6 +21,13 @@ import {
   resolverAlertasDosis,
   cargarAlertasCuidado,
   marcarAlertaCuidadoLeida,
+  crearGrupoFamiliar,
+  cargarMisFamilias,
+  cargarMiembrosFamilia,
+  crearInvitacionFamiliar,
+  aceptarInvitacionFamiliar,
+  eliminarMiembroFamiliar,
+  cargarPerfilFamiliar,
 } from "./cloudService";
 import {
   AlertCircle,
@@ -57,6 +64,9 @@ import {
   Target,
   Award,
   Download,
+  Crown,
+  Home,
+  ChevronRight,
 } from "lucide-react";
 
 const API_URL =
@@ -212,6 +222,15 @@ export default function PlanSalud() {
   const [minutosAvisoCuidador, setMinutosAvisoCuidador] = useState(30);
   const [mostrarHistorialAlertas, setMostrarHistorialAlertas] = useState(false);
   const [generandoReporte, setGenerandoReporte] = useState(false);
+  const [familias, setFamilias] = useState([]);
+  const [familiaSeleccionada, setFamiliaSeleccionada] = useState(null);
+  const [miembrosFamilia, setMiembrosFamilia] = useState([]);
+  const [nombreNuevaFamilia, setNombreNuevaFamilia] = useState("Mi familia");
+  const [rolInvitacionFamilia, setRolInvitacionFamilia] = useState("patient");
+  const [codigoInvitacionFamilia, setCodigoInvitacionFamilia] = useState("");
+  const [codigoAceptarFamilia, setCodigoAceptarFamilia] = useState("");
+  const [mensajePlanFamiliar, setMensajePlanFamiliar] = useState("");
+  const [cargandoPlanFamiliar, setCargandoPlanFamiliar] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -896,6 +915,10 @@ export default function PlanSalud() {
   }, [sesion?.user?.id, vista]);
 
   useEffect(() => {
+    if (sesion?.user?.id && vista === "familia") actualizarPlanFamiliar();
+  }, [sesion?.user?.id, vista]);
+
+  useEffect(() => {
     if (!sesion?.user?.id) return undefined;
     actualizarAlertasCuidado({ notificar: true });
     evaluarDosisPendientes();
@@ -917,6 +940,146 @@ export default function PlanSalud() {
     }, 30000);
     return () => window.clearInterval(id);
   }, [vista, pacienteCompartido?.ownerId]);
+
+  async function actualizarPlanFamiliar(familiaIdPreferida = null) {
+    if (!sesion?.user?.id || !supabaseConfigurado) return;
+    setCargandoPlanFamiliar(true);
+    try {
+      const lista = await cargarMisFamilias();
+      setFamilias(lista);
+      const seleccion =
+        lista.find((f) => f.family_id === familiaIdPreferida) ||
+        lista.find((f) => f.family_id === familiaSeleccionada?.family_id) ||
+        lista[0] ||
+        null;
+      setFamiliaSeleccionada(seleccion);
+      if (seleccion?.family_id) {
+        const miembros = await cargarMiembrosFamilia(seleccion.family_id);
+        setMiembrosFamilia(miembros);
+      } else {
+        setMiembrosFamilia([]);
+      }
+    } catch (e) {
+      console.error(e);
+      setMensajePlanFamiliar(e.message || "No se pudo cargar el plan familiar.");
+    } finally {
+      setCargandoPlanFamiliar(false);
+    }
+  }
+
+  async function crearNuevaFamilia() {
+    if (!sesion?.user?.id) return;
+    setCargandoPlanFamiliar(true);
+    setMensajePlanFamiliar("");
+    try {
+      const familiaId = await crearGrupoFamiliar(nombreNuevaFamilia || "Mi familia");
+      setMensajePlanFamiliar("Familia creada. Ya puedes invitar hasta 5 miembros adicionales.");
+      await actualizarPlanFamiliar(familiaId);
+    } catch (e) {
+      setMensajePlanFamiliar(e.message || "No se pudo crear la familia.");
+    } finally {
+      setCargandoPlanFamiliar(false);
+    }
+  }
+
+  async function generarInvitacionFamilia() {
+    if (!familiaSeleccionada?.family_id) return;
+    setCargandoPlanFamiliar(true);
+    setMensajePlanFamiliar("");
+    try {
+      const codigo = await crearInvitacionFamiliar(
+        familiaSeleccionada.family_id,
+        rolInvitacionFamilia,
+      );
+      setCodigoInvitacionFamilia(codigo);
+      setMensajePlanFamiliar("Código familiar creado. Vence en 7 días y se usa una sola vez.");
+    } catch (e) {
+      setMensajePlanFamiliar(e.message || "No se pudo crear la invitación familiar.");
+    } finally {
+      setCargandoPlanFamiliar(false);
+    }
+  }
+
+  async function compartirCodigoFamilia() {
+    if (!codigoInvitacionFamilia) return;
+    const texto =
+      `Te invito a unirte a ${familiaSeleccionada?.family_name || "mi familia"} en Mi Plan de Salud.\n\n` +
+      `Código: ${codigoInvitacionFamilia}\n\n` +
+      "Instala la aplicación, crea tu cuenta y entra en Familia → Plan Familiar → Unirme.";
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Share.share({
+          title: "Invitación Plan Familiar",
+          text: texto,
+          dialogTitle: "Compartir invitación familiar",
+        });
+      } else if (navigator.share) {
+        await navigator.share({ title: "Invitación Plan Familiar", text: texto });
+      } else {
+        await navigator.clipboard.writeText(texto);
+        setMensajePlanFamiliar("Invitación familiar copiada.");
+      }
+    } catch (e) {
+      if (e?.name !== "AbortError") setMensajePlanFamiliar("No se pudo compartir la invitación.");
+    }
+  }
+
+  async function aceptarCodigoFamilia() {
+    const codigo = codigoAceptarFamilia.trim().toUpperCase();
+    if (!codigo) return;
+    setCargandoPlanFamiliar(true);
+    setMensajePlanFamiliar("");
+    try {
+      const familiaId = await aceptarInvitacionFamiliar(codigo);
+      setCodigoAceptarFamilia("");
+      setMensajePlanFamiliar("Te uniste correctamente al Plan Familiar.");
+      await actualizarPlanFamiliar(familiaId);
+    } catch (e) {
+      setMensajePlanFamiliar(e.message || "Código familiar inválido o vencido.");
+    } finally {
+      setCargandoPlanFamiliar(false);
+    }
+  }
+
+  async function seleccionarFamilia(familia) {
+    setFamiliaSeleccionada(familia);
+    setCodigoInvitacionFamilia("");
+    try {
+      setMiembrosFamilia(await cargarMiembrosFamilia(familia.family_id));
+    } catch (e) {
+      setMensajePlanFamiliar(e.message || "No se pudieron cargar los miembros.");
+    }
+  }
+
+  async function abrirMiembroFamiliar(miembro) {
+    if (!miembro?.user_id || miembro.user_id === sesion?.user?.id) return;
+    setCargandoFamilia(true);
+    try {
+      const compartido = await cargarPerfilFamiliar(miembro.user_id);
+      setPacienteCompartido({
+        ownerId: miembro.user_id,
+        email: miembro.email || miembro.display_name || "Miembro familiar",
+        ...compartido,
+      });
+      setActualizadoCuidadorEn(new Date());
+    } catch (e) {
+      setMensajePlanFamiliar(e.message || "No se pudo abrir el perfil familiar.");
+    } finally {
+      setCargandoFamilia(false);
+    }
+  }
+
+  async function quitarMiembroFamiliar(miembro) {
+    if (!familiaSeleccionada?.family_id || !miembro?.user_id) return;
+    if (!window.confirm(`¿Quitar a ${miembro.email || "este miembro"} de la familia?`)) return;
+    try {
+      await eliminarMiembroFamiliar(familiaSeleccionada.family_id, miembro.user_id);
+      setMensajePlanFamiliar("Miembro eliminado del Plan Familiar.");
+      await actualizarPlanFamiliar(familiaSeleccionada.family_id);
+    } catch (e) {
+      setMensajePlanFamiliar(e.message || "No se pudo eliminar al miembro.");
+    }
+  }
 
   async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
@@ -1782,6 +1945,64 @@ export default function PlanSalud() {
               </div>
             ) : (
               <>
+                <div style={{ background: "linear-gradient(145deg,#183D33,#28584A)", color: "white", borderRadius: 16, padding: 15, marginBottom: 14, boxShadow: "0 10px 24px rgba(30,63,53,.14)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800 }}><Crown size={20} /> Plan Familiar</div>
+                    <span style={{ fontSize: 10.5, padding: "4px 8px", borderRadius: 999, background: "rgba(255,255,255,.14)" }}>V14 · hasta 6 miembros</span>
+                  </div>
+                  <p style={{ color: "#D4E6DE", fontSize: 12.5, lineHeight: 1.45, margin: "9px 0 12px" }}>
+                    Organiza tratamientos independientes y consulta a tu familia desde una sola suscripción. Los pagos se activarán en la fase de publicación.
+                  </p>
+
+                  {familias.length === 0 ? (
+                    <div style={{ background: "rgba(255,255,255,.09)", borderRadius: 11, padding: 11 }}>
+                      <label style={{ fontSize: 11.5, color: "#D4E6DE" }}>Nombre de tu familia</label>
+                      <input value={nombreNuevaFamilia} onChange={(e) => setNombreNuevaFamilia(e.target.value)} maxLength={50} placeholder="Ej.: Familia Vargas" style={{ width: "100%", margin: "5px 0 9px", padding: 10, border: "1px solid rgba(255,255,255,.25)", borderRadius: 9, background: "rgba(255,255,255,.96)", color: "#183D33" }} />
+                      <button onClick={crearNuevaFamilia} disabled={cargandoPlanFamiliar} style={{ width: "100%", border: "none", borderRadius: 9, padding: 10, background: "#E0A563", color: "#183D33", fontWeight: 800 }}>
+                        <Home size={16} style={{ verticalAlign: "middle", marginRight: 6 }} /> Crear Plan Familiar
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {familias.length > 1 && (
+                        <select value={familiaSeleccionada?.family_id || ""} onChange={(e) => seleccionarFamilia(familias.find((f) => f.family_id === e.target.value))} style={{ width: "100%", padding: 9, borderRadius: 9, border: "none", marginBottom: 9 }}>
+                          {familias.map((f) => <option key={f.family_id} value={f.family_id}>{f.family_name}</option>)}
+                        </select>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", padding: 10, borderRadius: 11, background: "rgba(255,255,255,.09)" }}>
+                        <div><div style={{ fontWeight: 800 }}>{familiaSeleccionada?.family_name || "Mi familia"}</div><div style={{ color: "#C5DBD1", fontSize: 11.5 }}>{miembrosFamilia.length}/6 miembros · {familiaSeleccionada?.member_role === "admin" ? "Administrador" : "Miembro"}</div></div>
+                        <button onClick={() => actualizarPlanFamiliar(familiaSeleccionada?.family_id)} style={{ border: "none", background: "rgba(255,255,255,.12)", color: "white", padding: 8, borderRadius: 8 }}><RefreshCw size={16} /></button>
+                      </div>
+
+                      {familiaSeleccionada?.member_role === "admin" && miembrosFamilia.length < 6 && (
+                        <div style={{ marginTop: 9, padding: 10, borderRadius: 11, background: "rgba(255,255,255,.09)" }}>
+                          <div style={{ display: "flex", gap: 7 }}>
+                            <select value={rolInvitacionFamilia} onChange={(e) => setRolInvitacionFamilia(e.target.value)} style={{ flex: 1, padding: 9, borderRadius: 8, border: "none" }}><option value="patient">Paciente</option><option value="caregiver">Cuidador</option><option value="admin">Administrador</option></select>
+                            <button onClick={generarInvitacionFamilia} disabled={cargandoPlanFamiliar} style={{ border: "none", borderRadius: 8, padding: "9px 11px", background: "#E0A563", color: "#183D33", fontWeight: 800 }}><UserPlus size={16} /></button>
+                          </div>
+                          {codigoInvitacionFamilia && <div style={{ marginTop: 9, textAlign: "center" }}><div style={{ fontFamily: "monospace", fontSize: 24, letterSpacing: 3, fontWeight: 900 }}>{codigoInvitacionFamilia}</div><button onClick={compartirCodigoFamilia} style={{ marginTop: 6, border: "1px solid rgba(255,255,255,.4)", borderRadius: 8, padding: "7px 11px", background: "transparent", color: "white", fontWeight: 700 }}><Share2 size={14} style={{ verticalAlign: "middle", marginRight: 5 }} /> Compartir</button></div>}
+                        </div>
+                      )}
+
+                      <div style={{ marginTop: 9, display: "grid", gap: 6 }}>
+                        {miembrosFamilia.map((m) => (
+                          <div key={`${familiaSeleccionada?.family_id}-${m.user_id}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: 9, borderRadius: 9, background: "rgba(255,255,255,.08)" }}>
+                            <User size={16} /><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{m.display_name || m.email || "Miembro"}{m.user_id === sesion.user.id ? " (tú)" : ""}</div><div style={{ fontSize: 10.5, color: "#C5DBD1" }}>{m.role === "admin" ? "Administrador" : m.role === "caregiver" ? "Cuidador" : "Paciente"}</div></div>
+                            {m.user_id !== sesion.user.id && <button onClick={() => abrirMiembroFamiliar(m)} title="Ver perfil" style={{ border: "none", borderRadius: 8, background: "rgba(255,255,255,.13)", color: "white", padding: 7 }}><Eye size={15} /></button>}
+                            {familiaSeleccionada?.member_role === "admin" && m.user_id !== sesion.user.id && <button onClick={() => quitarMiembroFamiliar(m)} title="Quitar miembro" style={{ border: "none", borderRadius: 8, background: "rgba(156,74,46,.55)", color: "white", padding: 7 }}><X size={15} /></button>}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, color: "#1E3F35" }}>Unirme a un Plan Familiar</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}><input value={codigoAceptarFamilia} onChange={(e) => setCodigoAceptarFamilia(e.target.value.toUpperCase())} maxLength={10} placeholder="FAM-CÓDIGO" style={{ flex: 1, minWidth: 0, padding: 10, borderRadius: 9, border: "1px solid #D8D2BC", letterSpacing: 1 }} /><button onClick={aceptarCodigoFamilia} disabled={cargandoPlanFamiliar} style={{ border: "none", borderRadius: 9, background: "#B87333", color: "white", padding: "10px 13px", fontWeight: 700 }}>Unirme</button></div>
+                  {mensajePlanFamiliar && <div style={{ marginTop: 8, fontSize: 11.5, color: "#5B6B60" }}>{mensajePlanFamiliar}</div>}
+                </div>
+
                 <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 14, padding: 14, marginBottom: 14 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", color: "#1E3F35", fontWeight: 700 }}>
                     <Users size={19} /> Círculo de cuidado
