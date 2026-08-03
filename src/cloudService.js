@@ -216,3 +216,69 @@ export async function cargarPacienteCompartido(ownerId) {
     recetas: (recipesResult.data || []).map((r) => ({ id: r.id, nombreArchivo: r.file_name, fechaReceta: r.prescription_date, leidaEn: r.read_at, confianza: r.confidence, requiereRevision: r.needs_review, datos: r.extracted_data || {} })),
   };
 }
+
+// ===== V12: alertas inteligentes del círculo de cuidado =====
+export async function crearAlertaDosisPendiente({
+  medicationId,
+  medicationName,
+  dose = "",
+  momentId,
+  momentName,
+  scheduledAt,
+  localDate,
+  alertType = "missed",
+}) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("create_missed_dose_alert", {
+    p_medication_id: medicationId || null,
+    p_medication_name: medicationName || "Medicamento",
+    p_dose: dose || "",
+    p_moment_id: momentId || null,
+    p_moment_name: momentName || null,
+    p_scheduled_at: scheduledAt,
+    p_local_date: localDate,
+    p_alert_type: alertType,
+  });
+  if (error) throw error;
+  return data || 0;
+}
+
+export async function resolverAlertasDosis({ medicationId, momentId, localDate }) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("resolve_medication_alerts", {
+    p_medication_id: medicationId || null,
+    p_moment_id: momentId || null,
+    p_local_date: localDate,
+  });
+  if (error) throw error;
+  return data || 0;
+}
+
+export async function cargarAlertasCuidado(limit = 100) {
+  verificarCliente();
+  const { data, error } = await supabase
+    .from("caregiver_alerts")
+    .select("id, owner_id, caregiver_id, owner_email, caregiver_email, medication_id, medication_name, dose, moment_id, moment_name, scheduled_at, local_date, alert_type, status, message, created_at, read_at, resolved_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function marcarAlertaCuidadoLeida(alertId) {
+  verificarCliente();
+  const { error } = await supabase
+    .from("caregiver_alerts")
+    .update({ read_at: new Date().toISOString() })
+    .eq("id", alertId);
+  if (error) throw error;
+}
+
+export async function resolverAlertaCuidado(alertId) {
+  verificarCliente();
+  const { error } = await supabase
+    .from("caregiver_alerts")
+    .update({ status: "resolved", resolved_at: new Date().toISOString() })
+    .eq("id", alertId);
+  if (error) throw error;
+}
