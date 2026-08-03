@@ -282,3 +282,61 @@ export async function resolverAlertaCuidado(alertId) {
     .eq("id", alertId);
   if (error) throw error;
 }
+
+// ===== V14: Plan Familiar Premium (preparado para suscripción) =====
+export async function crearGrupoFamiliar(nombre = "Mi familia") {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("create_family_group", { p_name: nombre });
+  if (error) throw error;
+  return data;
+}
+
+export async function cargarMisFamilias() {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("get_my_families");
+  if (error) throw error;
+  return data || [];
+}
+
+export async function cargarMiembrosFamilia(familyId) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("get_family_members", { p_family_id: familyId });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function crearInvitacionFamiliar(familyId, role = "patient") {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("create_family_invite", {
+    p_family_id: familyId,
+    p_role: role,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function aceptarInvitacionFamiliar(codigo) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("accept_family_invite", { p_code: codigo });
+  if (error) throw error;
+  return data;
+}
+
+export async function eliminarMiembroFamiliar(familyId, userId) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("remove_family_member", {
+    p_family_id: familyId,
+    p_user_id: userId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function cargarPerfilFamiliar(userId) {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("can_view_family_profile", { p_target_user: userId });
+  if (error) throw error;
+  if (!data) throw new Error("No tienes permiso para consultar este perfil familiar.");
+  return cargarPacienteCompartido(userId);
+}
+
