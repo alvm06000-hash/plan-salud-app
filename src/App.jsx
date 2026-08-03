@@ -3,6 +3,8 @@ import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { Share } from "@capacitor/share";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+import { jsPDF } from "jspdf";
 import { supabase, supabaseConfigurado } from "./supabaseClient";
 import {
   cargarDatosNube,
@@ -54,6 +56,7 @@ import {
   Trophy,
   Target,
   Award,
+  Download,
 } from "lucide-react";
 
 const API_URL =
@@ -208,6 +211,7 @@ export default function PlanSalud() {
   const [cargandoAlertas, setCargandoAlertas] = useState(false);
   const [minutosAvisoCuidador, setMinutosAvisoCuidador] = useState(30);
   const [mostrarHistorialAlertas, setMostrarHistorialAlertas] = useState(false);
+  const [generandoReporte, setGenerandoReporte] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -1057,6 +1061,137 @@ export default function PlanSalud() {
         texto:
           "No se pudieron programar las alarmas. Revisá los permisos de notificaciones, alarmas exactas y batería.",
       });
+    }
+  }
+
+  async function generarReporteMedicoPDF() {
+    if (!datos?.medicamentos?.length) {
+      setAvisoAlarmas({ tipo: "error", texto: "Agrega medicamentos antes de generar el reporte médico." });
+      return;
+    }
+
+    setGenerandoReporte(true);
+    try {
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const ancho = 210;
+      const margen = 16;
+      let y = 18;
+
+      const agregarTexto = (texto, tamano = 10, negrita = false, color = [45, 63, 53]) => {
+        doc.setFont("helvetica", negrita ? "bold" : "normal");
+        doc.setFontSize(tamano);
+        doc.setTextColor(...color);
+        const lineas = doc.splitTextToSize(String(texto ?? ""), ancho - margen * 2);
+        doc.text(lineas, margen, y);
+        y += lineas.length * (tamano * 0.42) + 2;
+      };
+
+      const nuevaPaginaSiHaceFalta = (alto = 24) => {
+        if (y + alto > 282) {
+          doc.addPage();
+          y = 18;
+        }
+      };
+
+      doc.setFillColor(30, 63, 53);
+      doc.rect(0, 0, ancho, 33, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(20);
+      doc.text("Mi pastillero semanal", margen, 15);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text("Reporte de seguimiento del tratamiento", margen, 23);
+      y = 42;
+
+      agregarTexto(`Paciente / cuenta: ${sesion?.user?.email || datos?.paciente || "Sin especificar"}`, 10, true);
+      agregarTexto(`Fecha de generación: ${new Date().toLocaleString("es-PE")}`, 9);
+      agregarTexto(`Periodo analizado: últimos 7 días`, 9);
+      y += 2;
+
+      doc.setFillColor(238, 247, 240);
+      doc.roundedRect(margen, y, ancho - margen * 2, 27, 3, 3, "F");
+      const yResumen = y;
+      doc.setTextColor(30, 63, 53);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text(`${cumplimiento7Dias}%`, margen + 8, yResumen + 12);
+      doc.setFontSize(9);
+      doc.text("Cumplimiento 7 días", margen + 8, yResumen + 19);
+      doc.text(`Tomadas: ${tomadas7Dias}`, margen + 57, yResumen + 12);
+      doc.text(`Omitidas: ${omitidas7Dias}`, margen + 104, yResumen + 12);
+      doc.text(`Medicamentos: ${medicamentosActivos}`, margen + 57, yResumen + 20);
+      doc.text(`Racha actual: ${rachaActual} días`, margen + 104, yResumen + 20);
+      y += 35;
+
+      agregarTexto("Medicamentos actuales", 14, true);
+      (datos.medicamentos || []).forEach((medicamento, indice) => {
+        nuevaPaginaSiHaceFalta(25);
+        agregarTexto(`${indice + 1}. ${medicamento.nombre || "Medicamento sin nombre"}`, 11, true);
+        const detalles = [
+          medicamento.dosis ? `Dosis: ${medicamento.dosis}` : null,
+          medicamento.frecuencia ? `Frecuencia: ${medicamento.frecuencia}` : null,
+          medicamento.duracion_dias ? `Duración: ${medicamento.duracion_dias} días` : null,
+          medicamento.indicaciones ? `Indicaciones: ${medicamento.indicaciones}` : null,
+          medicamento.momentos?.length ? `Horarios: ${medicamento.momentos.join(", ")}` : null,
+        ].filter(Boolean);
+        detalles.forEach((detalle) => agregarTexto(detalle, 9));
+        y += 2;
+      });
+
+      nuevaPaginaSiHaceFalta(35);
+      agregarTexto("Actividad reciente", 14, true);
+      const recientes = [...historial]
+        .sort((a, b) => new Date(b.fechaHora) - new Date(a.fechaHora))
+        .slice(0, 30);
+      if (!recientes.length) {
+        agregarTexto("No hay dosis registradas.", 9);
+      } else {
+        recientes.forEach((registro) => {
+          nuevaPaginaSiHaceFalta(12);
+          const fecha = registro.fechaHora ? new Date(registro.fechaHora).toLocaleString("es-PE") : registro.fecha;
+          agregarTexto(`• ${fecha} — ${registro.medicamento || "Medicamento"} — ${registro.estado === "tomado" ? "Tomado" : "Omitido"}${registro.momento ? ` (${registro.momento})` : ""}`, 8.5, false, registro.estado === "tomado" ? [47, 125, 74] : [185, 56, 56]);
+        });
+      }
+
+      nuevaPaginaSiHaceFalta(30);
+      agregarTexto("Recetas registradas", 14, true);
+      if (!historialRecetas.length) {
+        agregarTexto("No hay recetas guardadas.", 9);
+      } else {
+        historialRecetas.slice(0, 10).forEach((receta) => {
+          nuevaPaginaSiHaceFalta(16);
+          agregarTexto(`• ${receta.nombreArchivo || "Receta"} — ${receta.fechaReceta || receta.leidaEn || "Sin fecha"}${receta.confianza != null ? ` — Confianza ${receta.confianza}%` : ""}`, 8.5);
+        });
+      }
+
+      nuevaPaginaSiHaceFalta(28);
+      y += 4;
+      doc.setDrawColor(210, 210, 205);
+      doc.line(margen, y, ancho - margen, y);
+      y += 7;
+      agregarTexto("Este reporte es informativo y no reemplaza la evaluación ni las indicaciones de un profesional de salud.", 8, false, [100, 110, 104]);
+
+      const nombreArchivo = `reporte-medico-${fechaLocalClave()}.pdf`;
+      if (Capacitor.isNativePlatform()) {
+        const base64 = doc.output("datauristring").split(",")[1];
+        await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: Directory.Cache });
+        const archivo = await Filesystem.getUri({ path: nombreArchivo, directory: Directory.Cache });
+        await Share.share({
+          title: "Reporte médico",
+          text: "Reporte de seguimiento generado por Mi pastillero semanal.",
+          url: archivo.uri,
+          dialogTitle: "Compartir reporte médico",
+        });
+      } else {
+        doc.save(nombreArchivo);
+      }
+      setAvisoAlarmas({ tipo: "ok", texto: "Reporte médico generado correctamente." });
+    } catch (e) {
+      console.error("No se pudo generar el reporte PDF:", e);
+      setAvisoAlarmas({ tipo: "error", texto: "No se pudo generar el reporte. Revisa los permisos e inténtalo nuevamente." });
+    } finally {
+      setGenerandoReporte(false);
     }
   }
 
@@ -2210,6 +2345,19 @@ export default function PlanSalud() {
                   </div>
                     </div>
                   )}
+                </div>
+
+                <div style={{ background: "#EEF7F0", border: "1px solid #CFE3D6", borderRadius: 14, padding: 14, marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#1E3F35", fontWeight: 800 }}>
+                    <FileText size={19} color="#2F7D4A" /> Reporte médico en PDF
+                  </div>
+                  <p style={{ fontSize: 12.5, color: "#62736A", lineHeight: 1.45, margin: "8px 0 12px" }}>
+                    Genera un resumen con medicamentos, cumplimiento, actividad reciente y recetas para compartirlo con tu médico o familiar.
+                  </p>
+                  <button onClick={generarReporteMedicoPDF} disabled={generandoReporte} style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: "#1E3F35", color: "white", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: generandoReporte ? .65 : 1 }}>
+                    {generandoReporte ? <Loader2 size={18} /> : <Download size={18} />}
+                    {generandoReporte ? "Generando reporte..." : "Generar y compartir PDF"}
+                  </button>
                 </div>
 
                 <div
