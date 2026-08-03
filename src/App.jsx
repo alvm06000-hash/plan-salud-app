@@ -46,6 +46,10 @@ import {
   ShieldAlert,
   Share2,
   Eye,
+  Flame,
+  Trophy,
+  Target,
+  Award,
 } from "lucide-react";
 
 const API_URL =
@@ -997,6 +1001,79 @@ export default function PlanSalud() {
     ? Math.round((tomadas7Dias / historial7Dias.length) * 100)
     : 0;
 
+  const metaSemanal = 90;
+  const omitidas7Dias = historial7Dias.filter((registro) => registro.estado === "omitido").length;
+  const diasConRegistro7 = new Set(historial7Dias.map((registro) => registro.fecha)).size;
+  const medicamentosActivos = datos?.medicamentos?.length || 0;
+
+  const resumenPorDia = historial.reduce((acumulado, registro) => {
+    const clave = registro.fecha || fechaLocalClave(new Date(registro.fechaHora));
+    if (!acumulado[clave]) acumulado[clave] = { tomadas: 0, omitidas: 0 };
+    if (registro.estado === "tomado") acumulado[clave].tomadas += 1;
+    if (registro.estado === "omitido") acumulado[clave].omitidas += 1;
+    return acumulado;
+  }, {});
+
+  function sumarDias(fecha, cantidad) {
+    const copia = new Date(fecha);
+    copia.setDate(copia.getDate() + cantidad);
+    return copia;
+  }
+
+  function calcularRachaActual() {
+    let racha = 0;
+    let cursor = new Date();
+    cursor.setHours(12, 0, 0, 0);
+    const claveHoy = fechaLocalClave(cursor);
+    if (!resumenPorDia[claveHoy]) cursor = sumarDias(cursor, -1);
+    for (let i = 0; i < 3650; i += 1) {
+      const clave = fechaLocalClave(cursor);
+      const dia = resumenPorDia[clave];
+      if (!dia || dia.tomadas === 0 || dia.omitidas > 0) break;
+      racha += 1;
+      cursor = sumarDias(cursor, -1);
+    }
+    return racha;
+  }
+
+  function calcularMejorRacha() {
+    const diasValidos = Object.entries(resumenPorDia)
+      .filter(([, valor]) => valor.tomadas > 0 && valor.omitidas === 0)
+      .map(([fecha]) => fecha)
+      .sort();
+    let mejor = 0;
+    let actual = 0;
+    let anterior = null;
+    diasValidos.forEach((fecha) => {
+      const actualFecha = new Date(`${fecha}T12:00:00`);
+      if (anterior) {
+        const diferencia = Math.round((actualFecha - anterior) / 86400000);
+        actual = diferencia === 1 ? actual + 1 : 1;
+      } else actual = 1;
+      mejor = Math.max(mejor, actual);
+      anterior = actualFecha;
+    });
+    return mejor;
+  }
+
+  const rachaActual = calcularRachaActual();
+  const mejorRacha = calcularMejorRacha();
+  const nivelAdherencia = cumplimiento7Dias >= 90
+    ? { etiqueta: "Excelente", color: "#2F7D4A", fondo: "#E8F5EC", mensaje: "¡Excelente adherencia esta semana!" }
+    : cumplimiento7Dias >= 70
+      ? { etiqueta: "Bueno", color: "#B7791F", fondo: "#FFF4D8", mensaje: "Vas bien; estás cerca de tu meta." }
+      : cumplimiento7Dias >= 50
+        ? { etiqueta: "Regular", color: "#C56A1A", fondo: "#FFF0E0", mensaje: "Aún puedes recuperar el ritmo esta semana." }
+        : { etiqueta: "Riesgo", color: "#B93838", fondo: "#FDE8E8", mensaje: "Revisa las dosis pendientes y tu horario." };
+
+  const logros = [
+    { titulo: "Primera semana", detalle: "7 días", conseguido: mejorRacha >= 7, icono: "📅" },
+    { titulo: "30 dosis seguidas", detalle: "Constancia", conseguido: totalTomadas >= 30, icono: "💊" },
+    { titulo: "Un mes sin olvidos", detalle: "30 días", conseguido: mejorRacha >= 30, icono: "🏅" },
+    { titulo: "Excelente adherencia", detalle: "+90%", conseguido: cumplimiento7Dias >= 90, icono: "❤️" },
+    { titulo: "Cuidado compartido", detalle: "En familia", conseguido: circuloCuidado.length > 0, icono: "👨‍👩‍👧" },
+  ];
+
   return (
     <div
       style={{
@@ -1013,6 +1090,7 @@ export default function PlanSalud() {
         input, textarea { font-family: inherit; }
         ::selection { background: #B87333; color: white; }
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes crecerBarra { from { width: 0; } }
       `}</style>
 
       <header
@@ -1808,30 +1886,73 @@ export default function PlanSalud() {
                   </div>}
                 </div>
 
-                <div
-                  style={{
-                    background: "#1E3F35",
-                    color: "#F1EEE4",
-                    borderRadius: 14,
-                    padding: 16,
-                    marginBottom: 18,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700 }}>
-                    <BarChart3 size={18} color="#C4915C" /> Estadísticas
+                <div style={{ background: "#FFFDF8", border: "1px solid #E5DFC9", borderRadius: 16, padding: 16, marginBottom: 18, boxShadow: "0 8px 24px rgba(30,63,53,.06)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#1E3F35", fontSize: 18 }}>
+                        <BarChart3 size={20} color="#B87333" /> Cumplimiento semanal
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "#68776E", marginTop: 4 }}>Tu progreso de los últimos 7 días</div>
+                    </div>
+                    <div style={{ background: nivelAdherencia.fondo, color: nivelAdherencia.color, borderRadius: 999, padding: "7px 10px", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>
+                      {nivelAdherencia.etiqueta}
+                    </div>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginTop: 12 }}>
+
+                  <div style={{ marginTop: 18 }}>
+                    <div style={{ height: 30, borderRadius: 999, background: "#E8E8E3", overflow: "hidden", position: "relative" }}>
+                      <div style={{ width: `${Math.max(0, Math.min(100, cumplimiento7Dias))}%`, height: "100%", borderRadius: 999, background: nivelAdherencia.color, animation: "crecerBarra .8s ease-out", transition: "width .45s ease", display: "flex", justifyContent: "flex-end", alignItems: "center", minWidth: cumplimiento7Dias > 0 ? 48 : 0, paddingRight: cumplimiento7Dias > 0 ? 10 : 0, color: "white", fontWeight: 800, fontSize: 14 }}>
+                        {cumplimiento7Dias > 0 ? `${cumplimiento7Dias}%` : ""}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#7C8981", marginTop: 5 }}><span>0%</span><span>50%</span><span>100%</span></div>
+                    <div style={{ marginTop: 10, background: nivelAdherencia.fondo, color: "#41554A", borderRadius: 10, padding: "9px 10px", fontSize: 12, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span>{nivelAdherencia.mensaje}</span><strong style={{ color: nivelAdherencia.color, whiteSpace: "nowrap" }}>Meta: {metaSemanal}%</strong>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 9, marginTop: 14 }}>
                     {[
-                      ["Cumplimiento total", `${cumplimiento}%`],
-                      ["Últimos 7 días", `${cumplimiento7Dias}%`],
-                      ["Dosis tomadas", totalTomadas],
-                      ["Dosis omitidas", totalOmitidas],
-                    ].map(([etiqueta, valor]) => (
-                      <div key={etiqueta} style={{ background: "rgba(255,255,255,0.07)", borderRadius: 10, padding: 10 }}>
-                        <div style={{ fontSize: 11, color: "#9DB8AC" }}>{etiqueta}</div>
-                        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, marginTop: 2 }}>{valor}</div>
+                      { etiqueta: "Dosis tomadas", valor: tomadas7Dias, sub: `${cumplimiento7Dias}%`, color: "#2F7D4A", fondo: "#EEF7F0", icono: <CheckCircle2 size={17} /> },
+                      { etiqueta: "Dosis omitidas", valor: omitidas7Dias, sub: historial7Dias.length ? `${Math.round((omitidas7Dias / historial7Dias.length) * 100)}%` : "0%", color: "#B93838", fondo: "#FFF1F1", icono: <CircleX size={17} /> },
+                      { etiqueta: "Medicamentos activos", valor: medicamentosActivos, sub: "tratamientos", color: "#2867A0", fondo: "#EEF5FB", icono: <Pill size={17} /> },
+                      { etiqueta: "Días con registro", valor: `${diasConRegistro7}/7`, sub: "últimos 7 días", color: "#B7791F", fondo: "#FFF7E6", icono: <CalendarClock size={17} /> },
+                    ].map((item) => (
+                      <div key={item.etiqueta} style={{ background: item.fondo, borderRadius: 12, padding: 11, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, color: item.color, fontSize: 11.5, fontWeight: 700 }}>{item.icono}{item.etiqueta}</div>
+                        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 27, color: "#1E3F35", lineHeight: 1.1, marginTop: 7 }}>{item.valor}</div>
+                        <div style={{ color: item.color, fontSize: 11.5, fontWeight: 700, marginTop: 3 }}>{item.sub}</div>
                       </div>
                     ))}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 9, marginTop: 10 }}>
+                    <div style={{ border: "1px solid #F0D4A2", background: "#FFF8E9", borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#80531A", fontWeight: 800, fontSize: 12.5 }}><Flame size={18} /> Racha actual</div>
+                      <div style={{ fontFamily: "'Fraunces', serif", color: "#1E3F35", fontSize: 27, marginTop: 6 }}>{rachaActual} <span style={{ fontFamily: "inherit", fontSize: 13 }}>días</span></div>
+                    </div>
+                    <div style={{ border: "1px solid #D8C9EF", background: "#F7F1FF", borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#6944A0", fontWeight: 800, fontSize: 12.5 }}><Trophy size={18} /> Mejor racha</div>
+                      <div style={{ fontFamily: "'Fraunces', serif", color: "#1E3F35", fontSize: 27, marginTop: 6 }}>{mejorRacha} <span style={{ fontFamily: "inherit", fontSize: 13 }}>días</span></div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 12, padding: 12, borderRadius: 12, background: "#F6F4EC" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 800, color: "#1E3F35", fontSize: 12.5 }}><Target size={17} color={nivelAdherencia.color} /> Nivel de adherencia: <span style={{ color: nivelAdherencia.color }}>{nivelAdherencia.etiqueta}</span></div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginTop: 9 }}>
+                      {[{l:"Riesgo",c:"#B93838"},{l:"Regular",c:"#C56A1A"},{l:"Bueno",c:"#D7A522"},{l:"Excelente",c:"#2F7D4A"}].map((n) => <div key={n.l}><div style={{ height: 6, borderRadius: 999, background: n.c }} /><div style={{ fontSize: 9.5, textAlign: "center", color: "#64746B", marginTop: 4 }}>{n.l}</div></div>)}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 13 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#1E3F35", fontWeight: 800, fontSize: 13 }}><Award size={17} color="#B87333" /> Logros</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 7, marginTop: 8 }}>
+                      {logros.map((logro) => (
+                        <div key={logro.titulo} style={{ padding: 9, borderRadius: 10, border: logro.conseguido ? "1px solid #CFE3D6" : "1px solid #E5E1D7", background: logro.conseguido ? "#EDF7F0" : "#F6F4EF", opacity: logro.conseguido ? 1 : .62 }}>
+                          <div style={{ fontSize: 18 }}>{logro.icono}</div><div style={{ fontSize: 10.5, fontWeight: 800, color: "#1E3F35", marginTop: 3 }}>{logro.titulo}</div><div style={{ fontSize: 9.5, color: logro.conseguido ? "#2F7D4A" : "#7A8880", marginTop: 2 }}>{logro.conseguido ? "Conseguido" : logro.detalle}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
