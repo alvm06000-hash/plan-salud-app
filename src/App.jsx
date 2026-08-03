@@ -199,6 +199,7 @@ export default function PlanSalud() {
   const [pacienteCompartido, setPacienteCompartido] = useState(null);
   const [cargandoFamilia, setCargandoFamilia] = useState(false);
   const [actualizadoCuidadorEn, setActualizadoCuidadorEn] = useState(null);
+  const [mostrarDetallesEstadisticas, setMostrarDetallesEstadisticas] = useState(false);
   const fileInput = useRef(null);
 
   useEffect(() => {
@@ -1091,6 +1092,7 @@ export default function PlanSalud() {
         ::selection { background: #B87333; color: white; }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes crecerBarra { from { width: 0; } }
+        @keyframes aparecerDetalles { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
 
       <header
@@ -1911,6 +1913,43 @@ export default function PlanSalud() {
                     </div>
                   </div>
 
+                  <button
+                    type="button"
+                    onClick={() => setMostrarDetallesEstadisticas((valor) => !valor)}
+                    aria-expanded={mostrarDetallesEstadisticas}
+                    style={{
+                      width: "100%",
+                      marginTop: 13,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid #C9D7D0",
+                      background: mostrarDetallesEstadisticas ? "#1E3F35" : "#F4F8F6",
+                      color: mostrarDetallesEstadisticas ? "#FFFFFF" : "#1E3F35",
+                      fontWeight: 800,
+                      fontSize: 12.5,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 7,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span>{mostrarDetallesEstadisticas ? "Ocultar detalles" : "Ver detalles"}</span>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        display: "inline-block",
+                        transform: mostrarDetallesEstadisticas ? "rotate(180deg)" : "rotate(0deg)",
+                        transition: "transform .25s ease",
+                        fontSize: 15,
+                      }}
+                    >
+                      ▾
+                    </span>
+                  </button>
+
+                  {mostrarDetallesEstadisticas && (
+                    <div style={{ animation: "aparecerDetalles .25s ease-out" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 9, marginTop: 14 }}>
                     {[
                       { etiqueta: "Dosis tomadas", valor: tomadas7Dias, sub: `${cumplimiento7Dias}%`, color: "#2F7D4A", fondo: "#EEF7F0", icono: <CheckCircle2 size={17} /> },
@@ -1954,6 +1993,8 @@ export default function PlanSalud() {
                       ))}
                     </div>
                   </div>
+                    </div>
+                  )}
                 </div>
 
                 <div
