@@ -1179,6 +1179,39 @@ export default function PlanSalud() {
     { titulo: "Cuidado compartido", detalle: "En familia", conseguido: circuloCuidado.length > 0, icono: "👨‍👩‍👧" },
   ];
 
+
+  // V12.5: visualizaciones de tendencia y calendario de adherencia.
+  const tendenciaSemanal = Array.from({ length: 7 }, (_, indice) => {
+    const fecha = sumarDias(new Date(), indice - 6);
+    fecha.setHours(12, 0, 0, 0);
+    const clave = fechaLocalClave(fecha);
+    const resumen = resumenPorDia[clave] || { tomadas: 0, omitidas: 0 };
+    const total = resumen.tomadas + resumen.omitidas;
+    const porcentaje = total ? Math.round((resumen.tomadas / total) * 100) : 0;
+    const etiqueta = fecha.toLocaleDateString("es-PE", { weekday: "short" }).replace(".", "");
+    return { clave, etiqueta, tomadas: resumen.tomadas, omitidas: resumen.omitidas, total, porcentaje };
+  });
+
+  const fechaCalendario = new Date();
+  const anioCalendario = fechaCalendario.getFullYear();
+  const mesCalendario = fechaCalendario.getMonth();
+  const nombreMesCalendario = fechaCalendario.toLocaleDateString("es-PE", { month: "long", year: "numeric" });
+  const primerDiaMes = new Date(anioCalendario, mesCalendario, 1);
+  const desplazamientoLunes = (primerDiaMes.getDay() + 6) % 7;
+  const totalDiasMes = new Date(anioCalendario, mesCalendario + 1, 0).getDate();
+  const celdasCalendario = [
+    ...Array.from({ length: desplazamientoLunes }, () => null),
+    ...Array.from({ length: totalDiasMes }, (_, indice) => {
+      const dia = indice + 1;
+      const fecha = new Date(anioCalendario, mesCalendario, dia, 12, 0, 0, 0);
+      const clave = fechaLocalClave(fecha);
+      const resumen = resumenPorDia[clave] || { tomadas: 0, omitidas: 0 };
+      const total = resumen.tomadas + resumen.omitidas;
+      const porcentaje = total ? Math.round((resumen.tomadas / total) * 100) : null;
+      return { dia, clave, tomadas: resumen.tomadas, omitidas: resumen.omitidas, total, porcentaje, esHoy: clave === hoy };
+    }),
+  ];
+
   return (
     <div
       style={{
@@ -1197,6 +1230,7 @@ export default function PlanSalud() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes crecerBarra { from { width: 0; } }
         @keyframes aparecerDetalles { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes crecerColumna { from { height: 0; opacity: .45; } to { opacity: 1; } }
       `}</style>
 
       <header
@@ -2112,6 +2146,56 @@ export default function PlanSalud() {
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginTop: 9 }}>
                       {[{l:"Riesgo",c:"#B93838"},{l:"Regular",c:"#C56A1A"},{l:"Bueno",c:"#D7A522"},{l:"Excelente",c:"#2F7D4A"}].map((n) => <div key={n.l}><div style={{ height: 6, borderRadius: 999, background: n.c }} /><div style={{ fontSize: 9.5, textAlign: "center", color: "#64746B", marginTop: 4 }}>{n.l}</div></div>)}
                     </div>
+                  </div>
+
+                  <div style={{ marginTop: 13, padding: 12, borderRadius: 12, background: "#FFFDF8", border: "1px solid #E5DFC9" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#1E3F35", fontWeight: 800, fontSize: 13 }}>
+                        <BarChart3 size={17} color="#B87333" /> Evolución de los últimos 7 días
+                      </div>
+                      <span style={{ fontSize: 10, color: "#7A8880" }}>Tomadas vs. omitidas</span>
+                    </div>
+                    <div style={{ height: 150, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 7, marginTop: 14, padding: "0 2px" }}>
+                      {tendenciaSemanal.map((dia) => {
+                        const altura = dia.total ? Math.max(12, dia.porcentaje) : 4;
+                        return (
+                          <div key={dia.clave} style={{ flex: 1, minWidth: 0, textAlign: "center" }} title={`${dia.tomadas} tomadas · ${dia.omitidas} omitidas`}>
+                            <div style={{ height: 108, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
+                              {dia.total > 0 && <div style={{ position: "absolute", bottom: `${Math.min(94, altura)}%`, transform: "translateY(15px)", fontSize: 9.5, fontWeight: 800, color: dia.porcentaje >= 90 ? "#2F7D4A" : dia.porcentaje >= 70 ? "#B7791F" : "#B93838" }}>{dia.porcentaje}%</div>}
+                              <div style={{ width: "62%", maxWidth: 34, height: `${altura}%`, minHeight: 4, borderRadius: "8px 8px 3px 3px", background: dia.total ? (dia.porcentaje >= 90 ? "#2F7D4A" : dia.porcentaje >= 70 ? "#D7A522" : dia.porcentaje >= 50 ? "#C56A1A" : "#B93838") : "#DDDCD5", animation: "crecerColumna .55s ease-out" }} />
+                            </div>
+                            <div style={{ fontSize: 9.5, fontWeight: 700, color: "#65746B", textTransform: "capitalize", marginTop: 5 }}>{dia.etiqueta}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap", gap: 10, marginTop: 5, fontSize: 9.5, color: "#69776F" }}>
+                      <span>🟢 Excelente</span><span>🟡 Bueno</span><span>🟠 Regular</span><span>🔴 Riesgo</span>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 13, padding: 12, borderRadius: 12, background: "#FFFDF8", border: "1px solid #E5DFC9" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#1E3F35", fontWeight: 800, fontSize: 13 }}>
+                        <CalendarClock size={17} color="#B87333" /> Calendario de adherencia
+                      </div>
+                      <span style={{ fontSize: 10.5, color: "#7A8880", textTransform: "capitalize" }}>{nombreMesCalendario}</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 5, marginTop: 12 }}>
+                      {["L", "M", "M", "J", "V", "S", "D"].map((letra, indice) => <div key={`${letra}-${indice}`} style={{ textAlign: "center", fontSize: 9.5, fontWeight: 800, color: "#7A8880" }}>{letra}</div>)}
+                      {celdasCalendario.map((celda, indice) => {
+                        if (!celda) return <div key={`vacio-${indice}`} />;
+                        const fondo = celda.porcentaje == null ? "#F0EFE9" : celda.porcentaje >= 90 ? "#DCEFE2" : celda.porcentaje >= 70 ? "#FFF1C9" : celda.porcentaje >= 50 ? "#FDE6CF" : "#F8DADA";
+                        const color = celda.porcentaje == null ? "#9AA39E" : celda.porcentaje >= 90 ? "#276749" : celda.porcentaje >= 70 ? "#9A6A14" : celda.porcentaje >= 50 ? "#A65418" : "#A83232";
+                        return (
+                          <div key={celda.clave} title={celda.total ? `${celda.tomadas} tomadas · ${celda.omitidas} omitidas` : "Sin registros"} style={{ aspectRatio: "1 / 1", minHeight: 30, borderRadius: 8, background: fondo, color, border: celda.esHoy ? "2px solid #1E3F35" : "1px solid transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800 }}>
+                            <span>{celda.dia}</span>
+                            {celda.total > 0 && <span style={{ fontSize: 7.5, marginTop: 1 }}>{celda.porcentaje}%</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ marginTop: 9, fontSize: 10, color: "#78867E", lineHeight: 1.45 }}>Los días sin registro aparecen en gris. El borde oscuro identifica el día de hoy.</div>
                   </div>
 
                   <div style={{ marginTop: 13 }}>
