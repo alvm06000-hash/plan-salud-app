@@ -193,6 +193,8 @@ export default function PlanSalud() {
   const [medEditando, setMedEditando] = useState(null);
   const [avisoAlarmas, setAvisoAlarmas] = useState(null);
   const [mostrarOpcionesAlarmas, setMostrarOpcionesAlarmas] = useState(false);
+  const [cantidadAlarmasActivas, setCantidadAlarmasActivas] = useState(0);
+  const [proximaAlarma, setProximaAlarma] = useState(null);
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [historialRecetas, setHistorialRecetas] = useState([]);
@@ -232,6 +234,10 @@ export default function PlanSalud() {
   const [mensajePlanFamiliar, setMensajePlanFamiliar] = useState("");
   const [cargandoPlanFamiliar, setCargandoPlanFamiliar] = useState(false);
   const fileInput = useRef(null);
+
+  useEffect(() => {
+    actualizarEstadoAlarmas();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -1081,6 +1087,98 @@ export default function PlanSalud() {
     }
   }
 
+  async function actualizarEstadoAlarmas() {
+    try {
+      const guardadas = await Preferences.get({ key: "plan-salud:notificaciones" });
+      const ids = guardadas.value ? JSON.parse(guardadas.value) : [];
+      setCantidadAlarmasActivas(Array.isArray(ids) ? Math.max(0, ids.length - 1) : 0);
+
+      const proxima = await Preferences.get({ key: "plan-salud:proxima-alarma" });
+      setProximaAlarma(proxima.value ? JSON.parse(proxima.value) : null);
+    } catch (e) {
+      console.error("No se pudo leer el estado de alarmas", e);
+    }
+  }
+
+  async function eliminarTodasLasAlarmas() {
+    if (!Capacitor.isNativePlatform()) {
+      setAvisoAlarmas({ tipo: "error", texto: "Esta función solo está disponible en la APK." });
+      return;
+    }
+
+    if (!window.confirm("¿Deseas eliminar todas las alarmas programadas en este teléfono?")) return;
+
+    try {
+      const guardadas = await Preferences.get({ key: "plan-salud:notificaciones" });
+      const ids = guardadas.value ? JSON.parse(guardadas.value) : [];
+      if (Array.isArray(ids) && ids.length) {
+        await LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) });
+      }
+      await Preferences.remove({ key: "plan-salud:notificaciones" });
+      await Preferences.remove({ key: "plan-salud:proxima-alarma" });
+      setCantidadAlarmasActivas(0);
+      setProximaAlarma(null);
+      setAvisoAlarmas({ tipo: "ok", texto: "Todas las alarmas fueron eliminadas." });
+    } catch (e) {
+      console.error("No se pudieron eliminar las alarmas", e);
+      setAvisoAlarmas({ tipo: "error", texto: "No se pudieron eliminar las alarmas." });
+    }
+  }
+
+  async function reprogramarAlarmasTelefono() {
+    try {
+      const guardadas = await Preferences.get({ key: "plan-salud:notificaciones" });
+      const ids = guardadas.value ? JSON.parse(guardadas.value) : [];
+      if (Array.isArray(ids) && ids.length) {
+        await LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) });
+      }
+      await Preferences.remove({ key: "plan-salud:notificaciones" });
+      await Preferences.remove({ key: "plan-salud:proxima-alarma" });
+      await programarAlarmasTelefono();
+    } catch (e) {
+      setAvisoAlarmas({ tipo: "error", texto: "No se pudieron reprogramar las alarmas." });
+    }
+  }
+
+  async function probarSonidoAlarma() {
+    if (!Capacitor.isNativePlatform()) {
+      try {
+        const audio = new Audio("/plan_salud_signature.wav");
+        await audio.play();
+      } catch {
+        setAvisoAlarmas({ tipo: "error", texto: "La prueba de sonido estará disponible en la APK." });
+      }
+      return;
+    }
+
+    try {
+      const permiso = await LocalNotifications.requestPermissions();
+      if (permiso.display !== "granted") throw new Error("Permiso no concedido");
+      await LocalNotifications.createChannel({
+        id: "recordatorios-medicamentos",
+        name: "Recordatorios de medicamentos",
+        description: "Avisos para tomar los medicamentos programados",
+        importance: 5,
+        visibility: 1,
+        vibration: true,
+        sound: "plan_salud_signature.wav",
+      });
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: 2147482999,
+          title: "Sonido Plan Salud",
+          body: "Prueba del tono oficial de la aplicación.",
+          channelId: "recordatorios-medicamentos",
+          sound: "plan_salud_signature.wav",
+          schedule: { at: new Date(Date.now() + 3000), allowWhileIdle: true },
+        }],
+      });
+      setAvisoAlarmas({ tipo: "ok", texto: "La prueba sonará en 3 segundos." });
+    } catch (e) {
+      setAvisoAlarmas({ tipo: "error", texto: "No se pudo probar el sonido. Revisa los permisos." });
+    }
+  }
+
   async function programarAlarmasTelefono() {
     if (!datos?.medicamentos?.length) {
       setAvisoAlarmas({
@@ -1172,7 +1270,7 @@ export default function PlanSalud() {
         importance: 5,
         visibility: 1,
         vibration: true,
-        sound: "default",
+        sound: "plan_salud_signature.wav",
       });
 
       // Esta notificación permite comprobar el funcionamiento sin esperar
@@ -1186,7 +1284,7 @@ export default function PlanSalud() {
           at: new Date(Date.now() + 10000),
           allowWhileIdle: true,
         },
-        sound: "default",
+        sound: "plan_salud_signature.wav",
         extra: {
           tipo: "prueba",
         },
@@ -1195,7 +1293,7 @@ export default function PlanSalud() {
       const notificacionesConCanal = notificaciones.map((notificacion) => ({
         ...notificacion,
         channelId: "recordatorios-medicamentos",
-        sound: "default",
+        sound: "plan_salud_signature.wav",
       }));
 
       await LocalNotifications.schedule({
@@ -1209,6 +1307,24 @@ export default function PlanSalud() {
           ...notificacionesConCanal.map((n) => n.id),
         ]),
       });
+
+      const ordenadas = [...notificacionesConCanal].sort(
+        (a, b) => new Date(a.schedule.at).getTime() - new Date(b.schedule.at).getTime(),
+      );
+      const siguiente = ordenadas[0]
+        ? {
+            medicamento: ordenadas[0].title.replace("Hora de tomar ", ""),
+            fecha: ordenadas[0].schedule.at,
+          }
+        : null;
+      if (siguiente) {
+        await Preferences.set({
+          key: "plan-salud:proxima-alarma",
+          value: JSON.stringify(siguiente),
+        });
+      }
+      setCantidadAlarmasActivas(notificacionesConCanal.length);
+      setProximaAlarma(siguiente);
 
       setAvisoAlarmas({
         tipo: "ok",
@@ -2318,6 +2434,29 @@ export default function PlanSalud() {
                     </div>
                   </div>
 
+
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: 12,
+                      borderRadius: 12,
+                      background: cantidadAlarmasActivas > 0 ? "#E7F3EC" : "#F1EFE8",
+                      color: "#1E3F35",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700 }}>
+                      {cantidadAlarmasActivas > 0 ? "🟢 Alarmas activas" : "⚪ Sin alarmas programadas"}
+                    </div>
+                    <div style={{ fontSize: 12.5, marginTop: 3 }}>
+                      {cantidadAlarmasActivas} recordatorios programados
+                    </div>
+                    {proximaAlarma && (
+                      <div style={{ fontSize: 12.5, marginTop: 7 }}>
+                        Próxima: <strong>{proximaAlarma.medicamento}</strong> · {new Date(proximaAlarma.fecha).toLocaleString("es-PE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     onClick={() =>
                       setMostrarOpcionesAlarmas((valorActual) => !valorActual)
@@ -2378,6 +2517,57 @@ export default function PlanSalud() {
                       </button>
                     </div>
                   )}
+
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                      marginTop: 10,
+                    }}
+                  >
+                    <button
+                      onClick={reprogramarAlarmasTelefono}
+                      style={{
+                        padding: "10px 8px",
+                        borderRadius: 10,
+                        border: "1px solid #1E3F35",
+                        background: "transparent",
+                        color: "#1E3F35",
+                        fontWeight: 700,
+                      }}
+                    >
+                      Reprogramar
+                    </button>
+                    <button
+                      onClick={eliminarTodasLasAlarmas}
+                      style={{
+                        padding: "10px 8px",
+                        borderRadius: 10,
+                        border: "1px solid #A44A3F",
+                        background: "#FFF5F3",
+                        color: "#A44A3F",
+                        fontWeight: 700,
+                      }}
+                    >
+                      Eliminar alarmas
+                    </button>
+                    <button
+                      onClick={probarSonidoAlarma}
+                      style={{
+                        gridColumn: "1 / -1",
+                        padding: "10px 8px",
+                        borderRadius: 10,
+                        border: "1px solid #B87333",
+                        background: "#FFFDF8",
+                        color: "#8A5A3B",
+                        fontWeight: 700,
+                      }}
+                    >
+                      ▶ Probar sonido Plan Salud
+                    </button>
+                  </div>
 
                   {avisoAlarmas && (
                     <div
