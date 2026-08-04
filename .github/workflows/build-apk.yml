@@ -38,6 +38,13 @@ jobs:
           fi
           npx cap sync android
 
+      - name: Copiar sonido oficial de Plan Salud
+        run: |
+          mkdir -p android/app/src/main/res/raw
+          cp assets/plan_salud_signature.wav android/app/src/main/res/raw/plan_salud_signature.wav
+          mkdir -p public
+          cp assets/plan_salud_signature.wav public/plan_salud_signature.wav
+
       - name: Configurar permisos Android
         run: |
           python3 <<'PY'
