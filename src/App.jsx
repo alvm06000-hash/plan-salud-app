@@ -81,6 +81,8 @@ const API_URL =
   "https://plan-salud-server-production.up.railway.app/api/leer-receta";
 const INTERACCIONES_URL =
   "https://plan-salud-server-production.up.railway.app/api/analizar-interacciones";
+const REVERSE_GEOCODE_URL =
+  "https://plan-salud-server-production.up.railway.app/api/reverse-geocode";
 
 const MOMENTOS = [
   { id: "manana", label: "Mañana", sub: "6:00–11:59" },
@@ -1742,16 +1744,32 @@ export default function PlanSalud() {
       const lon = Number(posicion.coords.longitude);
       const accuracy = Number(posicion.coords.accuracy || 0);
 
+      const respuestaUbicacion = await fetch(
+        `${REVERSE_GEOCODE_URL}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,
+      );
+      const ubicacion = await respuestaUbicacion.json().catch(() => ({}));
+
+      if (!respuestaUbicacion.ok) {
+        throw new Error(
+          ubicacion?.error || "Se detectó el GPS, pero no se pudo identificar la ubicación.",
+        );
+      }
+
       setPerfilSalud((actual) => ({
         ...actual,
         location_source: "gps",
+        country: ubicacion.country || actual.country || "Perú",
+        department: ubicacion.department || actual.department || "",
+        province: ubicacion.province || actual.province || "",
+        district: ubicacion.district || actual.district || "",
         // Se guarda precisión aproximada (~100 m), no la coordenada GPS completa.
         gps_latitude_approx: Number(lat.toFixed(3)),
         gps_longitude_approx: Number(lon.toFixed(3)),
         gps_accuracy_m: Math.round(accuracy),
       }));
+
       setMensajePerfil(
-        "Ubicación detectada. Completa o confirma departamento, provincia y distrito antes de guardar.",
+        `Ubicación completada automáticamente${ubicacion.district ? `: ${ubicacion.district}` : ""}. Revísala y corrige cualquier dato antes de guardar.`,
       );
     } catch (e) {
       console.error("Error de ubicación", e);
@@ -2754,7 +2772,7 @@ export default function PlanSalud() {
                     </div>
 
                     <div style={{ color: "#6B7A70", fontSize: 12, marginTop: 4 }}>
-                      Puedes usar el GPS o completar la ubicación manualmente.
+                      Puedes usar el GPS o completar la ubicación manualmente. La conversión de coordenadas a dirección usa datos de OpenStreetMap.
                     </div>
 
                     <button
