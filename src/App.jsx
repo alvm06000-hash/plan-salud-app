@@ -310,6 +310,15 @@ export default function PlanSalud() {
   const [adminStats, setAdminStats] = useState(null);
   const [adminCargando, setAdminCargando] = useState(false);
   const [adminError, setAdminError] = useState("");
+
+  const adminEmailUI =
+    String(sesion?.user?.email || "").trim().toLowerCase() ===
+    "miplansalud4@gmail.com";
+
+  // Fallback visual: permite mostrar el botón inmediatamente para la cuenta
+  // administrativa. La seguridad real sigue estando en Supabase mediante
+  // get_admin_analytics(), que valida app_admins antes de devolver datos.
+  const adminPermitidoUI = esAdminApp || adminEmailUI;
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
   const gpsCapturadoRef = useRef({
@@ -1838,7 +1847,14 @@ export default function PlanSalud() {
         if (activo) setEsAdminApp(Boolean(permitido));
       } catch (e) {
         console.error("No se pudo verificar acceso administrativo", e);
-        if (activo) setEsAdminApp(false);
+        // No bloqueamos visualmente la cuenta admin conocida por un fallo
+        // temporal del RPC. El RPC de estadísticas seguirá validando permisos.
+        if (activo) {
+          const email = String(sesion?.user?.email || "")
+            .trim()
+            .toLowerCase();
+          setEsAdminApp(email === "miplansalud4@gmail.com");
+        }
       }
     }
 
@@ -1850,7 +1866,7 @@ export default function PlanSalud() {
   }, [sesion?.user?.id]);
 
   async function actualizarEstadisticasAdmin() {
-    if (!sesion?.user?.id || !esAdminApp) return;
+    if (!sesion?.user?.id || !adminPermitidoUI) return;
 
     setAdminCargando(true);
     setAdminError("");
@@ -1871,10 +1887,10 @@ export default function PlanSalud() {
   }
 
   useEffect(() => {
-    if (vista === "admin" && esAdminApp) {
+    if (vista === "admin" && adminPermitidoUI) {
       actualizarEstadisticasAdmin();
     }
-  }, [vista, esAdminApp, sesion?.user?.id]);
+  }, [vista, adminPermitidoUI, sesion?.user?.id]);
 
   async function cargarMiPerfilSalud() {
     if (!sesion?.user?.id || !supabaseConfigurado) return;
@@ -2333,7 +2349,7 @@ export default function PlanSalud() {
                 ["recetas", "Historial"],
                 ["familia", "Familia"],
                 ["perfil", "Mi perfil de salud"],
-                ...(esAdminApp ? [["admin", "Estadísticas admin"]] : []),
+                ...(adminPermitidoUI ? [["admin", "Estadísticas admin"]] : []),
               ].map(([valor, etiqueta]) => (
                 <button
                   key={valor}
@@ -3132,6 +3148,17 @@ export default function PlanSalud() {
                 </button>
               </div>
 
+              <div
+                style={{
+                  marginTop: 8,
+                  color: "#9EB5AA",
+                  fontSize: 10.5,
+                }}
+              >
+                Cuenta: {sesion?.user?.email || "sin sesión"} · acceso visual{" "}
+                {adminPermitidoUI ? "habilitado" : "bloqueado"}
+              </div>
+
               {adminStats?.generated_at && (
                 <div
                   style={{
@@ -3151,7 +3178,7 @@ export default function PlanSalud() {
               )}
             </div>
 
-            {!esAdminApp ? (
+            {!adminPermitidoUI ? (
               <div
                 style={{
                   background: "#FFF3F0",
