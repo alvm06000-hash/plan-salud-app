@@ -68,6 +68,7 @@ import {
   Crown,
   Home,
   ChevronRight,
+  Menu,
 } from "lucide-react";
 
 const API_URL =
@@ -234,6 +235,7 @@ export default function PlanSalud() {
   const [codigoAceptarFamilia, setCodigoAceptarFamilia] = useState("");
   const [mensajePlanFamiliar, setMensajePlanFamiliar] = useState("");
   const [cargandoPlanFamiliar, setCargandoPlanFamiliar] = useState(false);
+  const [menuAbierto, setMenuAbierto] = useState(false);
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
 
@@ -1654,9 +1656,93 @@ export default function PlanSalud() {
           background: "#1E3F35",
           color: "#F1EEE4",
           padding: "28px 20px 22px",
+          position: "relative",
         }}
       >
-        <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <button
+          type="button"
+          onClick={() => setMenuAbierto((abierto) => !abierto)}
+          aria-label={menuAbierto ? "Cerrar menú" : "Abrir menú"}
+          style={{
+            position: "absolute",
+            top: 18,
+            left: 16,
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            border: "1px solid rgba(241,238,228,.28)",
+            background: "rgba(255,255,255,.08)",
+            color: "#F1EEE4",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 30,
+          }}
+        >
+          {menuAbierto ? <X size={22} /> : <Menu size={22} />}
+        </button>
+
+        {menuAbierto && (
+          <>
+            <button
+              type="button"
+              aria-label="Cerrar menú"
+              onClick={() => setMenuAbierto(false)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                border: "none",
+                background: "rgba(17,31,26,.38)",
+                zIndex: 20,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                top: 66,
+                left: 16,
+                width: 220,
+                background: "#FFFDF8",
+                border: "1px solid #D8D2BC",
+                borderRadius: 14,
+                boxShadow: "0 14px 34px rgba(18,41,33,.22)",
+                overflow: "hidden",
+                zIndex: 40,
+              }}
+            >
+              {[
+                ["subir", "Nueva receta"],
+                ["horario", "Mi horario"],
+                ["recetas", "Historial"],
+                ["familia", "Familia"],
+              ].map(([valor, etiqueta]) => (
+                <button
+                  key={valor}
+                  type="button"
+                  onClick={() => {
+                    setVista(valor);
+                    setMenuAbierto(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "13px 15px",
+                    border: "none",
+                    borderBottom: "1px solid #EEE8D9",
+                    background: vista === valor ? "#EEF4F1" : "#FFFDF8",
+                    color: "#1E3F35",
+                    textAlign: "left",
+                    fontSize: 14,
+                    fontWeight: vista === valor ? 800 : 650,
+                  }}
+                >
+                  {etiqueta}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div style={{ maxWidth: 640, margin: "0 auto", paddingLeft: 44 }}>
           <div
             style={{
               display: "flex",
@@ -1692,34 +1778,68 @@ export default function PlanSalud() {
         </div>
       </header>
 
-      <nav
-        style={{
-          maxWidth: 640,
-          margin: "0 auto",
-          display: "flex",
-          gap: 8,
-          padding: "16px 20px 0",
-          flexWrap: "wrap",
-        }}
-      >
-        {["subir", "horario", "recetas", "familia"].map((v) => (
-          <button
-            key={v}
-            onClick={() => setVista(v)}
+      {vista === "horario" && (
+        <div style={{ maxWidth: 640, margin: "0 auto", padding: "14px 20px 0" }}>
+          <div
             style={{
-              padding: "8px 16px",
-              borderRadius: 20,
-              border: "1px solid #1E3F35",
-              background: vista === v ? "#1E3F35" : "transparent",
-              color: vista === v ? "#F1EEE4" : "#1E3F35",
-              fontSize: 13,
-              fontWeight: 600,
+              background: "#FFFDF8",
+              border: "1px solid #E5DFC9",
+              borderRadius: 14,
+              padding: "12px 14px",
+              boxShadow: "0 6px 18px rgba(30,63,53,.05)",
             }}
           >
-            {v === "subir" ? "Nueva receta" : v === "horario" ? "Mi horario" : v === "recetas" ? "Historial" : "Familia"}
-          </button>
-        ))}
-      </nav>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#1E3F35" }}>
+                Cumplimiento semanal
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: nivelAdherencia.color }}>
+                {cumplimiento7Dias}%
+              </div>
+            </div>
+
+            <div
+              style={{
+                height: 14,
+                borderRadius: 999,
+                background: "#E7E9E5",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${Math.max(0, Math.min(100, cumplimiento7Dias))}%`,
+                  height: "100%",
+                  borderRadius: 999,
+                  background: nivelAdherencia.color,
+                  transition: "width .45s ease",
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: 6,
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 10.5,
+                color: "#7C8981",
+              }}
+            >
+              <span>{nivelAdherencia.etiqueta}</span>
+              <span>Meta {metaSemanal}%</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main style={{ maxWidth: 640, margin: "0 auto", padding: 20 }}>
         <section
