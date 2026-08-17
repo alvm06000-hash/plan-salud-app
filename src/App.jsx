@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Preferences } from "@capacitor/preferences";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { Geolocation } from "@capacitor/geolocation";
 import { Share } from "@capacitor/share";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { jsPDF } from "jspdf";
@@ -28,6 +29,8 @@ import {
   aceptarInvitacionFamiliar,
   eliminarMiembroFamiliar,
   cargarPerfilFamiliar,
+  cargarPerfilSalud,
+  guardarPerfilSalud,
 } from "./cloudService";
 import {
   AlertCircle,
@@ -69,6 +72,9 @@ import {
   Home,
   ChevronRight,
   Menu,
+  MapPin,
+  HeartPulse,
+  Save,
 } from "lucide-react";
 
 const API_URL =
@@ -236,6 +242,29 @@ export default function PlanSalud() {
   const [mensajePlanFamiliar, setMensajePlanFamiliar] = useState("");
   const [cargandoPlanFamiliar, setCargandoPlanFamiliar] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState(false);
+  const [perfilSalud, setPerfilSalud] = useState({
+    birth_year: "",
+    sex: "",
+    country: "Perú",
+    department: "",
+    province: "",
+    district: "",
+    primary_condition: "",
+    other_conditions: "",
+    allergies: "",
+    chronic_treatment: false,
+    has_caregiver: false,
+    health_data_consent: false,
+    analytics_consent: false,
+    location_source: "manual",
+    gps_latitude_approx: null,
+    gps_longitude_approx: null,
+    gps_accuracy_m: null,
+  });
+  const [perfilCargando, setPerfilCargando] = useState(false);
+  const [perfilGuardando, setPerfilGuardando] = useState(false);
+  const [ubicacionCargando, setUbicacionCargando] = useState(false);
+  const [mensajePerfil, setMensajePerfil] = useState("");
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
 
@@ -1630,6 +1659,159 @@ export default function PlanSalud() {
     }),
   ];
 
+
+  async function cargarMiPerfilSalud() {
+    if (!sesion?.user?.id || !supabaseConfigurado) return;
+    setPerfilCargando(true);
+    setMensajePerfil("");
+    try {
+      const perfil = await cargarPerfilSalud(sesion.user.id);
+      if (perfil) {
+        setPerfilSalud({
+          birth_year: perfil.birth_year ?? "",
+          sex: perfil.sex || "",
+          country: perfil.country || "Perú",
+          department: perfil.department || "",
+          province: perfil.province || "",
+          district: perfil.district || "",
+          primary_condition: perfil.primary_condition || "",
+          other_conditions: Array.isArray(perfil.other_conditions)
+            ? perfil.other_conditions.join(", ")
+            : "",
+          allergies: Array.isArray(perfil.allergies)
+            ? perfil.allergies.join(", ")
+            : "",
+          chronic_treatment: Boolean(perfil.chronic_treatment),
+          has_caregiver: Boolean(perfil.has_caregiver),
+          health_data_consent: Boolean(perfil.health_data_consent),
+          analytics_consent: Boolean(perfil.analytics_consent),
+          location_source: perfil.location_source || "manual",
+          gps_latitude_approx: perfil.gps_latitude_approx ?? null,
+          gps_longitude_approx: perfil.gps_longitude_approx ?? null,
+          gps_accuracy_m: perfil.gps_accuracy_m ?? null,
+        });
+      }
+    } catch (e) {
+      console.error("No se pudo cargar el perfil de salud", e);
+      setMensajePerfil("No se pudo cargar el perfil de salud.");
+    } finally {
+      setPerfilCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    if (vista === "perfil" && sesion?.user?.id) {
+      cargarMiPerfilSalud();
+    }
+  }, [vista, sesion?.user?.id]);
+
+  function actualizarPerfil(campo, valor) {
+    setPerfilSalud((actual) => ({ ...actual, [campo]: valor }));
+  }
+
+  async function detectarUbicacionPerfil() {
+    setUbicacionCargando(true);
+    setMensajePerfil("");
+    try {
+      let posicion;
+      if (Capacitor.isNativePlatform()) {
+        const permiso = await Geolocation.requestPermissions();
+        if (permiso.location !== "granted" && permiso.coarseLocation !== "granted") {
+          throw new Error("No se concedió permiso de ubicación.");
+        }
+        posicion = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 300000,
+        });
+      } else {
+        posicion = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error("Este dispositivo no ofrece geolocalización."));
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(
+            (p) => resolve(p),
+            (e) => reject(new Error(e.message || "No se pudo obtener la ubicación.")),
+            { enableHighAccuracy: true, timeout: 12000, maximumAge: 300000 },
+          );
+        });
+      }
+
+      const lat = Number(posicion.coords.latitude);
+      const lon = Number(posicion.coords.longitude);
+      const accuracy = Number(posicion.coords.accuracy || 0);
+
+      setPerfilSalud((actual) => ({
+        ...actual,
+        location_source: "gps",
+        // Se guarda precisión aproximada (~100 m), no la coordenada GPS completa.
+        gps_latitude_approx: Number(lat.toFixed(3)),
+        gps_longitude_approx: Number(lon.toFixed(3)),
+        gps_accuracy_m: Math.round(accuracy),
+      }));
+      setMensajePerfil(
+        "Ubicación detectada. Completa o confirma departamento, provincia y distrito antes de guardar.",
+      );
+    } catch (e) {
+      console.error("Error de ubicación", e);
+      setMensajePerfil(e?.message || "No se pudo obtener la ubicación.");
+    } finally {
+      setUbicacionCargando(false);
+    }
+  }
+
+  async function guardarMiPerfilSalud() {
+    if (!sesion?.user?.id) {
+      setMensajePerfil("Inicia sesión para guardar tu perfil.");
+      return;
+    }
+    if (!perfilSalud.health_data_consent) {
+      setMensajePerfil(
+        "Debes aceptar el tratamiento de tus datos de salud para guardar el perfil.",
+      );
+      return;
+    }
+
+    setPerfilGuardando(true);
+    setMensajePerfil("");
+    try {
+      const lista = (texto) =>
+        String(texto || "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+
+      await guardarPerfilSalud(sesion.user.id, {
+        birth_year: perfilSalud.birth_year
+          ? Number(perfilSalud.birth_year)
+          : null,
+        sex: perfilSalud.sex || null,
+        country: perfilSalud.country || null,
+        department: perfilSalud.department || null,
+        province: perfilSalud.province || null,
+        district: perfilSalud.district || null,
+        primary_condition: perfilSalud.primary_condition || null,
+        other_conditions: lista(perfilSalud.other_conditions),
+        allergies: lista(perfilSalud.allergies),
+        chronic_treatment: Boolean(perfilSalud.chronic_treatment),
+        has_caregiver: Boolean(perfilSalud.has_caregiver),
+        health_data_consent: true,
+        analytics_consent: Boolean(perfilSalud.analytics_consent),
+        location_source: perfilSalud.location_source || "manual",
+        gps_latitude_approx: perfilSalud.gps_latitude_approx,
+        gps_longitude_approx: perfilSalud.gps_longitude_approx,
+        gps_accuracy_m: perfilSalud.gps_accuracy_m,
+      });
+      setMensajePerfil("Perfil de salud guardado correctamente.");
+    } catch (e) {
+      console.error("No se pudo guardar el perfil", e);
+      setMensajePerfil(e?.message || "No se pudo guardar el perfil.");
+    } finally {
+      setPerfilGuardando(false);
+    }
+  }
+
   return (
     <div
       style={{
@@ -1715,6 +1897,7 @@ export default function PlanSalud() {
                 ["horario", "Mi horario"],
                 ["recetas", "Historial"],
                 ["familia", "Familia"],
+                ["perfil", "Mi perfil de salud"],
               ].map(([valor, etiqueta]) => (
                 <button
                   key={valor}
