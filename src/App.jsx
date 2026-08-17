@@ -1850,6 +1850,88 @@ export default function PlanSalud() {
     setPerfilSalud((actual) => ({ ...actual, [campo]: valor }));
   }
 
+  function normalizarTextoUbicacion(valor = "") {
+    return String(valor || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function completarUbicacionAdministrativa(perfil = {}) {
+    const salida = { ...perfil };
+    const pais = normalizarTextoUbicacion(salida.country);
+    const distrito = normalizarTextoUbicacion(salida.district);
+
+    if (pais === "peru" || pais === "pe") {
+      const distritosLima = new Set([
+        "lima",
+        "ancon",
+        "ate",
+        "barranco",
+        "brena",
+        "carabayllo",
+        "chaclacayo",
+        "chorrillos",
+        "cieneguilla",
+        "comas",
+        "el agustino",
+        "independencia",
+        "jesus maria",
+        "la molina",
+        "la victoria",
+        "lince",
+        "los olivos",
+        "lurin",
+        "lurigancho",
+        "magdalena del mar",
+        "miraflores",
+        "pachacamac",
+        "pucusana",
+        "pueblo libre",
+        "puente piedra",
+        "punta hermosa",
+        "punta negra",
+        "rimac",
+        "san bartolo",
+        "san borja",
+        "san isidro",
+        "san juan de lurigancho",
+        "san juan de miraflores",
+        "san luis",
+        "san martin de porres",
+        "san miguel",
+        "santa anita",
+        "santa maria del mar",
+        "santa rosa",
+        "santiago de surco",
+        "surquillo",
+        "villa el salvador",
+        "villa maria del triunfo",
+      ]);
+
+      const distritosCallao = new Set([
+        "callao",
+        "bellavista",
+        "carmen de la legua reynoso",
+        "la perla",
+        "la punta",
+        "mi peru",
+        "ventanilla",
+      ]);
+
+      if (distritosLima.has(distrito)) {
+        if (!salida.department) salida.department = "Lima";
+        if (!salida.province) salida.province = "Lima";
+      } else if (distritosCallao.has(distrito)) {
+        if (!salida.department) salida.department = "Callao";
+        if (!salida.province) salida.province = "Callao";
+      }
+    }
+
+    return salida;
+  }
+
   async function detectarUbicacionPerfil() {
     setUbicacionCargando(true);
     setMensajePerfil("");
@@ -1894,18 +1976,20 @@ export default function PlanSalud() {
         );
       }
 
-      setPerfilSalud((actual) => ({
-        ...actual,
-        location_source: "gps",
-        country: ubicacion.country || actual.country || "Perú",
-        department: ubicacion.department || actual.department || "",
-        province: ubicacion.province || actual.province || "",
-        district: ubicacion.district || actual.district || "",
-        // Se guarda precisión aproximada (~100 m), no la coordenada GPS completa.
-        gps_latitude_approx: Number(lat.toFixed(3)),
-        gps_longitude_approx: Number(lon.toFixed(3)),
-        gps_accuracy_m: Math.round(accuracy),
-      }));
+      setPerfilSalud((actual) =>
+        completarUbicacionAdministrativa({
+          ...actual,
+          location_source: "gps",
+          country: ubicacion.country || actual.country || "Perú",
+          department: ubicacion.department || actual.department || "",
+          province: ubicacion.province || actual.province || "",
+          district: ubicacion.district || actual.district || "",
+          // Se guarda precisión aproximada (~100 m), no la coordenada GPS completa.
+          gps_latitude_approx: Number(lat.toFixed(3)),
+          gps_longitude_approx: Number(lon.toFixed(3)),
+          gps_accuracy_m: Math.round(accuracy),
+        }),
+      );
 
       setMensajePerfil(
         `Ubicación completada automáticamente${ubicacion.district ? `: ${ubicacion.district}` : ""}. Revísala y corrige cualquier dato antes de guardar.`,
@@ -1939,26 +2023,43 @@ export default function PlanSalud() {
           .map((x) => x.trim())
           .filter(Boolean);
 
+      const perfilUbicacion = completarUbicacionAdministrativa(perfilSalud);
+
+      if (
+        !String(perfilUbicacion.country || "").trim() ||
+        !String(perfilUbicacion.department || "").trim() ||
+        !String(perfilUbicacion.province || "").trim() ||
+        !String(perfilUbicacion.district || "").trim()
+      ) {
+        setPerfilSalud(perfilUbicacion);
+        setMensajePerfil(
+          "Confirma País, Departamento, Provincia y Distrito antes de guardar.",
+        );
+        return;
+      }
+
+      setPerfilSalud(perfilUbicacion);
+
       await guardarPerfilSalud(sesion.user.id, {
-        birth_year: perfilSalud.birth_year
-          ? Number(perfilSalud.birth_year)
+        birth_year: perfilUbicacion.birth_year
+          ? Number(perfilUbicacion.birth_year)
           : null,
-        sex: perfilSalud.sex || null,
-        country: perfilSalud.country || null,
-        department: perfilSalud.department || null,
-        province: perfilSalud.province || null,
-        district: perfilSalud.district || null,
-        primary_condition: perfilSalud.primary_condition || null,
-        other_conditions: lista(perfilSalud.other_conditions),
-        allergies: lista(perfilSalud.allergies),
-        chronic_treatment: Boolean(perfilSalud.chronic_treatment),
-        has_caregiver: Boolean(perfilSalud.has_caregiver),
+        sex: perfilUbicacion.sex || null,
+        country: perfilUbicacion.country || null,
+        department: perfilUbicacion.department || null,
+        province: perfilUbicacion.province || null,
+        district: perfilUbicacion.district || null,
+        primary_condition: perfilUbicacion.primary_condition || null,
+        other_conditions: lista(perfilUbicacion.other_conditions),
+        allergies: lista(perfilUbicacion.allergies),
+        chronic_treatment: Boolean(perfilUbicacion.chronic_treatment),
+        has_caregiver: Boolean(perfilUbicacion.has_caregiver),
         health_data_consent: true,
-        analytics_consent: Boolean(perfilSalud.analytics_consent),
-        location_source: perfilSalud.location_source || "manual",
-        gps_latitude_approx: perfilSalud.gps_latitude_approx,
-        gps_longitude_approx: perfilSalud.gps_longitude_approx,
-        gps_accuracy_m: perfilSalud.gps_accuracy_m,
+        analytics_consent: Boolean(perfilUbicacion.analytics_consent),
+        location_source: perfilUbicacion.location_source || "manual",
+        gps_latitude_approx: perfilUbicacion.gps_latitude_approx,
+        gps_longitude_approx: perfilUbicacion.gps_longitude_approx,
+        gps_accuracy_m: perfilUbicacion.gps_accuracy_m,
       });
       setMensajePerfil("Perfil de salud guardado correctamente.");
     } catch (e) {
