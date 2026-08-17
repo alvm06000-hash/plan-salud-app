@@ -2630,6 +2630,331 @@ export default function PlanSalud() {
           </section>
         )}
 
+
+        {vista === "perfil" && (
+          <div data-v14-2-profile-view="true">
+            <div
+              style={{
+                background: "#FFFDF8",
+                border: "1px solid #E5DFC9",
+                borderRadius: 16,
+                padding: 18,
+                marginBottom: 18,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <HeartPulse size={22} color="#B87333" />
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      color: "#1E3F35",
+                      fontFamily: "'Fraunces', serif",
+                      fontSize: 21,
+                    }}
+                  >
+                    Mi perfil de salud
+                  </h2>
+                  <div style={{ color: "#6B7A70", fontSize: 12.5, marginTop: 2 }}>
+                    Completa información voluntaria para personalizar la app y generar estadísticas agregadas.
+                  </div>
+                </div>
+              </div>
+
+              {!sesion?.user ? (
+                <div
+                  style={{
+                    marginTop: 16,
+                    padding: 14,
+                    background: "#F3EFE5",
+                    borderRadius: 10,
+                    color: "#5B6B60",
+                    fontSize: 13,
+                  }}
+                >
+                  Inicia sesión para crear y sincronizar tu perfil de salud.
+                </div>
+              ) : (
+                <>
+                  {perfilCargando && (
+                    <div style={{ marginTop: 14, color: "#6B7A70", fontSize: 13 }}>
+                      Cargando perfil...
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: 10,
+                      marginTop: 16,
+                    }}
+                  >
+                    <label style={{ fontSize: 12.5, color: "#4A5C53" }}>
+                      Año de nacimiento
+                      <input
+                        type="number"
+                        min="1900"
+                        max={new Date().getFullYear()}
+                        value={perfilSalud.birth_year}
+                        onChange={(e) => actualizarPerfil("birth_year", e.target.value)}
+                        placeholder="Ej. 1968"
+                        style={{
+                          width: "100%",
+                          marginTop: 5,
+                          padding: 10,
+                          borderRadius: 9,
+                          border: "1px solid #D8D2BC",
+                        }}
+                      />
+                    </label>
+
+                    <label style={{ fontSize: 12.5, color: "#4A5C53" }}>
+                      Sexo (opcional)
+                      <select
+                        value={perfilSalud.sex}
+                        onChange={(e) => actualizarPerfil("sex", e.target.value)}
+                        style={{
+                          width: "100%",
+                          marginTop: 5,
+                          padding: 10,
+                          borderRadius: 9,
+                          border: "1px solid #D8D2BC",
+                          background: "white",
+                        }}
+                      >
+                        <option value="">Prefiero no indicar</option>
+                        <option value="female">Femenino</option>
+                        <option value="male">Masculino</option>
+                        <option value="other">Otro</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 16,
+                      padding: 14,
+                      background: "#EEF4F1",
+                      borderRadius: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        color: "#1E3F35",
+                        fontWeight: 800,
+                        fontSize: 14,
+                      }}
+                    >
+                      <MapPin size={17} />
+                      Ubicación
+                    </div>
+
+                    <div style={{ color: "#6B7A70", fontSize: 12, marginTop: 4 }}>
+                      Puedes usar el GPS o completar la ubicación manualmente.
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={ubicacionCargando}
+                      onClick={detectarUbicacionPerfil}
+                      style={{
+                        marginTop: 10,
+                        width: "100%",
+                        padding: 10,
+                        borderRadius: 9,
+                        border: "1px solid #1E3F35",
+                        background: "#1E3F35",
+                        color: "#F1EEE4",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {ubicacionCargando ? "Detectando ubicación..." : "📍 Usar mi ubicación actual"}
+                    </button>
+
+                    {perfilSalud.gps_latitude_approx != null &&
+                      perfilSalud.gps_longitude_approx != null && (
+                        <div style={{ marginTop: 8, fontSize: 11.5, color: "#5B6B60" }}>
+                          Ubicación GPS aproximada detectada correctamente.
+                        </div>
+                      )}
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: 8,
+                        marginTop: 12,
+                      }}
+                    >
+                      {[
+                        ["country", "País", "Perú"],
+                        ["department", "Departamento", "Lima"],
+                        ["province", "Provincia", "Lima"],
+                        ["district", "Distrito", "San Borja"],
+                      ].map(([campo, etiqueta, placeholder]) => (
+                        <label key={campo} style={{ fontSize: 12, color: "#4A5C53" }}>
+                          {etiqueta}
+                          <input
+                            value={perfilSalud[campo]}
+                            onChange={(e) => actualizarPerfil(campo, e.target.value)}
+                            placeholder={placeholder}
+                            style={{
+                              width: "100%",
+                              marginTop: 4,
+                              padding: 9,
+                              borderRadius: 8,
+                              border: "1px solid #D8D2BC",
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 16 }}>
+                    <label style={{ fontSize: 12.5, color: "#4A5C53" }}>
+                      Condición o enfermedad principal
+                      <input
+                        value={perfilSalud.primary_condition}
+                        onChange={(e) => actualizarPerfil("primary_condition", e.target.value)}
+                        placeholder="Ej. Hipertensión"
+                        style={{
+                          width: "100%",
+                          marginTop: 5,
+                          padding: 10,
+                          borderRadius: 9,
+                          border: "1px solid #D8D2BC",
+                        }}
+                      />
+                    </label>
+
+                    <label style={{ display: "block", fontSize: 12.5, color: "#4A5C53", marginTop: 10 }}>
+                      Otras condiciones (separadas por comas)
+                      <input
+                        value={perfilSalud.other_conditions}
+                        onChange={(e) => actualizarPerfil("other_conditions", e.target.value)}
+                        placeholder="Ej. Diabetes, colesterol alto"
+                        style={{
+                          width: "100%",
+                          marginTop: 5,
+                          padding: 10,
+                          borderRadius: 9,
+                          border: "1px solid #D8D2BC",
+                        }}
+                      />
+                    </label>
+
+                    <label style={{ display: "block", fontSize: 12.5, color: "#4A5C53", marginTop: 10 }}>
+                      Alergias conocidas (separadas por comas)
+                      <input
+                        value={perfilSalud.allergies}
+                        onChange={(e) => actualizarPerfil("allergies", e.target.value)}
+                        placeholder="Ej. Penicilina"
+                        style={{
+                          width: "100%",
+                          marginTop: 5,
+                          padding: 10,
+                          borderRadius: 9,
+                          border: "1px solid #D8D2BC",
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 8, marginTop: 14, fontSize: 13, color: "#344B42" }}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={perfilSalud.chronic_treatment}
+                        onChange={(e) => actualizarPerfil("chronic_treatment", e.target.checked)}
+                      />{" "}
+                      Estoy en tratamiento permanente o crónico
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={perfilSalud.has_caregiver}
+                        onChange={(e) => actualizarPerfil("has_caregiver", e.target.checked)}
+                      />{" "}
+                      Cuento con familiar o cuidador
+                    </label>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 16,
+                      padding: 14,
+                      border: "1px solid #E5DFC9",
+                      borderRadius: 12,
+                      background: "#FFF9EE",
+                      fontSize: 12.5,
+                      color: "#4A5C53",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <label style={{ display: "block", fontWeight: 700 }}>
+                      <input
+                        type="checkbox"
+                        checked={perfilSalud.health_data_consent}
+                        onChange={(e) => actualizarPerfil("health_data_consent", e.target.checked)}
+                      />{" "}
+                      Acepto que Plan Salud almacene y procese los datos de este perfil para ofrecer las funciones de la aplicación.
+                    </label>
+
+                    <label style={{ display: "block", marginTop: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={perfilSalud.analytics_consent}
+                        onChange={(e) => actualizarPerfil("analytics_consent", e.target.checked)}
+                      />{" "}
+                      Acepto voluntariamente que mis datos se utilicen de forma agregada para estadísticas y mejora del producto.
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={perfilGuardando}
+                    onClick={guardarMiPerfilSalud}
+                    style={{
+                      marginTop: 14,
+                      width: "100%",
+                      padding: 12,
+                      borderRadius: 10,
+                      border: "none",
+                      background: "#B87333",
+                      color: "white",
+                      fontWeight: 800,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 7,
+                    }}
+                  >
+                    <Save size={17} />
+                    {perfilGuardando ? "Guardando..." : "Guardar perfil"}
+                  </button>
+
+                  {mensajePerfil && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        fontSize: 12.5,
+                        color: mensajePerfil.includes("correctamente") ? "#276749" : "#8A5A3B",
+                      }}
+                    >
+                      {mensajePerfil}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {vista === "horario" && (
           <div>
             {!datos ||
