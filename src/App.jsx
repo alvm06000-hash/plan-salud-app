@@ -115,6 +115,42 @@ function colorPara(nombre = "Medicamento") {
   return PALETA[Math.abs(h) % PALETA.length];
 }
 
+function claveLocalUsuario(base, userId) {
+  return `${base}:${userId || "invitado"}`;
+}
+
+async function leerPreferenciaJSON(key, fallback) {
+  try {
+    const resultado = await Preferences.get({ key });
+    if (!resultado?.value) return fallback;
+    return JSON.parse(resultado.value);
+  } catch {
+    return fallback;
+  }
+}
+
+function mensajeSincronizacionAmigable(error) {
+  const detalle = String(error?.message || error || "").toLowerCase();
+
+  if (
+    detalle.includes("row-level security") ||
+    detalle.includes("violates row-level security") ||
+    detalle.includes("permission denied")
+  ) {
+    return "No se pudo completar la sincronización segura. Tus datos locales permanecen protegidos. Pulsa Sincronizar nuevamente.";
+  }
+
+  if (
+    detalle.includes("failed to fetch") ||
+    detalle.includes("network") ||
+    detalle.includes("offline")
+  ) {
+    return "No se pudo conectar con la nube. Revisa tu conexión e intenta nuevamente.";
+  }
+
+  return "No se pudo completar la sincronización. Intenta nuevamente.";
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -267,6 +303,7 @@ export default function PlanSalud() {
   const [perfilGuardando, setPerfilGuardando] = useState(false);
   const [ubicacionCargando, setUbicacionCargando] = useState(false);
   const [mensajePerfil, setMensajePerfil] = useState("");
+  const [usuarioLocalListo, setUsuarioLocalListo] = useState(null);
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
 
@@ -274,33 +311,18 @@ export default function PlanSalud() {
     actualizarEstadoAlarmas();
   }, []);
 
+  // Ajustes del dispositivo que no contienen el plan médico.
   useEffect(() => {
     (async () => {
       try {
-        const res = await Preferences.get({ key: "plan-salud:datos" });
-        if (res?.value) {
-          setDatos(JSON.parse(res.value));
-          setVista("horario");
-        }
-
-        const historialGuardado = await Preferences.get({
-          key: "plan-salud:historial",
+        const demoraGuardada = await Preferences.get({
+          key: "plan-salud:demora-cuidador",
         });
-        if (historialGuardado?.value) {
-          setHistorial(JSON.parse(historialGuardado.value));
+        if (demoraGuardada?.value) {
+          setMinutosAvisoCuidador(Number(demoraGuardada.value) || 30);
         }
-
-        const recetasGuardadas = await Preferences.get({
-          key: "plan-salud:recetas",
-        });
-        if (recetasGuardadas?.value) {
-          setHistorialRecetas(JSON.parse(recetasGuardadas.value));
-        }
-
-        const demoraGuardada = await Preferences.get({ key: "plan-salud:demora-cuidador" });
-        if (demoraGuardada?.value) setMinutosAvisoCuidador(Number(demoraGuardada.value) || 30);
       } catch (e) {
-        console.error("No se pudieron recuperar los datos guardados", e);
+        console.error("No se pudieron recuperar los ajustes del dispositivo", e);
       }
     })();
   }, []);
@@ -324,11 +346,67 @@ export default function PlanSalud() {
     };
   }, []);
 
+  // Cada cuenta usa un espacio local distinto. Así dos usuarios que inician
+  // sesión en el mismo teléfono no comparten medicamentos, dosis ni recetas.
+  useEffect(() => {
+    let activo = true;
+
+    async function cargarDatosLocalesDelUsuario() {
+      const userId = sesion?.user?.id;
+
+      if (!userId) {
+        if (activo) {
+          setUsuarioLocalListo(null);
+        }
+        return;
+      }
+
+      setUsuarioLocalListo(null);
+
+      const [planLocal, historialLocal, recetasLocales] = await Promise.all([
+        leerPreferenciaJSON(
+          claveLocalUsuario("plan-salud:datos", userId),
+          null,
+        ),
+        leerPreferenciaJSON(
+          claveLocalUsuario("plan-salud:historial", userId),
+          [],
+        ),
+        leerPreferenciaJSON(
+          claveLocalUsuario("plan-salud:recetas", userId),
+          [],
+        ),
+      ]);
+
+      if (!activo) return;
+
+      setDatos(planLocal);
+      setHistorial(Array.isArray(historialLocal) ? historialLocal : []);
+      setHistorialRecetas(Array.isArray(recetasLocales) ? recetasLocales : []);
+      setVista(planLocal ? "horario" : "subir");
+      setUsuarioLocalListo(userId);
+    }
+
+    cargarDatosLocalesDelUsuario().catch((e) => {
+      console.error("No se pudieron cargar los datos locales del usuario", e);
+      if (activo && sesion?.user?.id) {
+        setDatos(null);
+        setHistorial([]);
+        setHistorialRecetas([]);
+        setUsuarioLocalListo(sesion.user.id);
+      }
+    });
+
+    return () => {
+      activo = false;
+    };
+  }, [sesion?.user?.id]);
+
   async function guardar(nuevosDatos) {
     setDatos(nuevosDatos);
     try {
       await Preferences.set({
-        key: "plan-salud:datos",
+        key: claveLocalUsuario("plan-salud:datos", sesion?.user?.id),
         value: JSON.stringify(nuevosDatos),
       });
 
@@ -350,7 +428,7 @@ export default function PlanSalud() {
 
     setHistorialRecetas(nuevasRecetas);
     await Preferences.set({
-      key: "plan-salud:recetas",
+      key: claveLocalUsuario("plan-salud:recetas", sesion?.user?.id),
       value: JSON.stringify(nuevasRecetas),
     });
 
@@ -365,7 +443,7 @@ export default function PlanSalud() {
     const nuevasRecetas = historialRecetas.filter((item) => item.id !== recetaId);
     setHistorialRecetas(nuevasRecetas);
     await Preferences.set({
-      key: "plan-salud:recetas",
+      key: claveLocalUsuario("plan-salud:recetas", sesion?.user?.id),
       value: JSON.stringify(nuevasRecetas),
     });
     if (recetaExpandida === recetaId) setRecetaExpandida(null);
@@ -548,7 +626,7 @@ export default function PlanSalud() {
     setHistorial(nuevoHistorial);
     try {
       await Preferences.set({
-        key: "plan-salud:historial",
+        key: claveLocalUsuario("plan-salud:historial", sesion?.user?.id),
         value: JSON.stringify(nuevoHistorial),
       });
 
@@ -712,66 +790,109 @@ export default function PlanSalud() {
 
   async function cerrarSesion() {
     await supabase.auth.signOut();
+    setDatos(null);
+    setHistorial([]);
+    setHistorialRecetas([]);
+    setPacienteCompartido(null);
+    setUsuarioLocalListo(null);
+    setVista("subir");
     setEstadoNube("Sesión cerrada.");
   }
 
   async function sincronizarNube() {
-    if (!sesion?.user?.id || !supabaseConfigurado) return;
+    const userId = sesion?.user?.id;
+    if (!userId || !supabaseConfigurado) return;
+    if (usuarioLocalListo !== userId) return;
 
     setSincronizando(true);
     setEstadoNube("Sincronizando...");
 
     try {
-      const remoto = await cargarDatosNube(sesion.user.id);
+      const [remoto, planGuardado, historialGuardado, recetasGuardadas] =
+        await Promise.all([
+          cargarDatosNube(userId),
+          leerPreferenciaJSON(
+            claveLocalUsuario("plan-salud:datos", userId),
+            null,
+          ),
+          leerPreferenciaJSON(
+            claveLocalUsuario("plan-salud:historial", userId),
+            [],
+          ),
+          leerPreferenciaJSON(
+            claveLocalUsuario("plan-salud:recetas", userId),
+            [],
+          ),
+        ]);
 
-      const planFinal = remoto.plan || datos || { medicamentos: [], citas: [] };
-      const historialRemoto = remoto.historial || [];
-      const recetasRemotas = remoto.recetas || [];
+      const planFinal =
+        remoto.plan || planGuardado || { medicamentos: [], citas: [] };
+
+      const historialRemoto = Array.isArray(remoto.historial)
+        ? remoto.historial
+        : [];
+      const historialLocal = Array.isArray(historialGuardado)
+        ? historialGuardado
+        : [];
+
       const mapa = new Map();
-
-      [...historialRemoto, ...historial].forEach((registro) => {
-        mapa.set(registro.id, registro);
+      [...historialRemoto, ...historialLocal].forEach((registro) => {
+        if (registro?.id) mapa.set(registro.id, registro);
       });
 
       const historialFinal = [...mapa.values()].sort(
-        (a, b) => new Date(b.fechaHora) - new Date(a.fechaHora),
+        (a, b) => new Date(b.fechaHora || 0) - new Date(a.fechaHora || 0),
       );
+
+      const recetasRemotas = Array.isArray(remoto.recetas) ? remoto.recetas : [];
+      const recetasLocales = Array.isArray(recetasGuardadas)
+        ? recetasGuardadas
+        : [];
 
       const mapaRecetas = new Map();
-      [...recetasRemotas, ...historialRecetas].forEach((receta) => {
-        mapaRecetas.set(receta.id, receta);
+      [...recetasRemotas, ...recetasLocales].forEach((receta) => {
+        if (receta?.id) mapaRecetas.set(receta.id, receta);
       });
+
       const recetasFinales = [...mapaRecetas.values()].sort(
-        (a, b) => new Date(b.leidaEn) - new Date(a.leidaEn),
+        (a, b) => new Date(b.leidaEn || 0) - new Date(a.leidaEn || 0),
       );
 
-      await Preferences.set({
-        key: "plan-salud:datos",
-        value: JSON.stringify(planFinal),
-      });
-      await Preferences.set({
-        key: "plan-salud:historial",
-        value: JSON.stringify(historialFinal),
-      });
-      await Preferences.set({
-        key: "plan-salud:recetas",
-        value: JSON.stringify(recetasFinales),
-      });
+      await Promise.all([
+        Preferences.set({
+          key: claveLocalUsuario("plan-salud:datos", userId),
+          value: JSON.stringify(planFinal),
+        }),
+        Preferences.set({
+          key: claveLocalUsuario("plan-salud:historial", userId),
+          value: JSON.stringify(historialFinal),
+        }),
+        Preferences.set({
+          key: claveLocalUsuario("plan-salud:recetas", userId),
+          value: JSON.stringify(recetasFinales),
+        }),
+      ]);
 
       setDatos(planFinal);
       setHistorial(historialFinal);
       setHistorialRecetas(recetasFinales);
 
-      await guardarDatosNube(sesion.user.id, planFinal);
-      await guardarHistorialNube(sesion.user.id, historialFinal);
-      await Promise.all(
-        recetasFinales.map((receta) => guardarRecetaNube(sesion.user.id, receta)),
-      );
+      await guardarDatosNube(userId, planFinal);
+
+      if (historialFinal.length > 0) {
+        await guardarHistorialNube(userId, historialFinal);
+      }
+
+      if (recetasFinales.length > 0) {
+        await Promise.all(
+          recetasFinales.map((receta) => guardarRecetaNube(userId, receta)),
+        );
+      }
 
       setEstadoNube("Sincronización automática al día.");
     } catch (e) {
-      console.error(e);
-      setEstadoNube(e.message || "No se pudo sincronizar con la nube.");
+      console.error("Error de sincronización:", e);
+      setEstadoNube(mensajeSincronizacionAmigable(e));
     } finally {
       setSincronizando(false);
     }
@@ -781,17 +902,29 @@ export default function PlanSalud() {
   // a tener conexión o regresar a la aplicación. Los cambios locales ya se
   // suben automáticamente desde guardar() y guardarHistorial().
   useEffect(() => {
-    if (!sesion?.user?.id || !supabaseConfigurado) return undefined;
+    if (
+      !sesion?.user?.id ||
+      !supabaseConfigurado ||
+      usuarioLocalListo !== sesion.user.id
+    ) {
+      return undefined;
+    }
 
     const temporizador = window.setTimeout(() => {
       sincronizarNube();
     }, 700);
 
     return () => window.clearTimeout(temporizador);
-  }, [sesion?.user?.id]);
+  }, [sesion?.user?.id, usuarioLocalListo]);
 
   useEffect(() => {
-    if (!sesion?.user?.id || !supabaseConfigurado) return undefined;
+    if (
+      !sesion?.user?.id ||
+      !supabaseConfigurado ||
+      usuarioLocalListo !== sesion.user.id
+    ) {
+      return undefined;
+    }
 
     const sincronizarSiCorresponde = () => {
       if (navigator.onLine) sincronizarNube();
@@ -808,7 +941,13 @@ export default function PlanSalud() {
       window.removeEventListener("online", sincronizarSiCorresponde);
       document.removeEventListener("visibilitychange", alCambiarVisibilidad);
     };
-  }, [sesion?.user?.id, datos, historial, historialRecetas]);
+  }, [
+    sesion?.user?.id,
+    usuarioLocalListo,
+    datos,
+    historial,
+    historialRecetas,
+  ]);
 
   async function analizarInteracciones() {
     const medicamentos = (datos?.medicamentos || []).map((m) => ({
