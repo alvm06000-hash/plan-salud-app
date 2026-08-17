@@ -403,3 +403,19 @@ export async function guardarPerfilSalud(userId, perfil) {
   if (error) throw error;
   return data;
 }
+
+
+// ===== V14.4: Panel administrativo de estadísticas agregadas =====
+export async function esAdministrador() {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("is_app_admin");
+  if (error) throw error;
+  return Boolean(data);
+}
+
+export async function cargarEstadisticasAdmin() {
+  verificarCliente();
+  const { data, error } = await supabase.rpc("get_admin_analytics");
+  if (error) throw error;
+  return data || null;
+}
