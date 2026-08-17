@@ -39,6 +39,7 @@ import {
   User,
   BellRing,
   CalendarClock,
+  Camera,
   CheckCircle2,
   CircleX,
   Clock,
@@ -234,6 +235,7 @@ export default function PlanSalud() {
   const [mensajePlanFamiliar, setMensajePlanFamiliar] = useState("");
   const [cargandoPlanFamiliar, setCargandoPlanFamiliar] = useState(false);
   const fileInput = useRef(null);
+  const cameraInput = useRef(null);
 
   useEffect(() => {
     actualizarEstadoAlarmas();
@@ -1873,12 +1875,54 @@ export default function PlanSalud() {
               )}
             </div>
 
+            <button
+              type="button"
+              onClick={() => cameraInput.current?.click()}
+              disabled={cargando}
+              style={{
+                marginTop: 12,
+                width: "100%",
+                padding: 12,
+                borderRadius: 10,
+                border: "none",
+                background: cargando ? "#8A9A90" : "#1E3F35",
+                color: "#F1EEE4",
+                fontWeight: 700,
+                fontSize: 14,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                cursor: cargando ? "default" : "pointer",
+              }}
+            >
+              <Camera size={18} />
+              Abrir cámara
+            </button>
+
+            <input
+              ref={cameraInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const archivo = e.target.files?.[0];
+                if (archivo) await manejarArchivo(archivo);
+                e.target.value = "";
+              }}
+            />
+
             <input
               ref={fileInput}
               type="file"
               accept="image/*,application/pdf,.pdf"
               style={{ display: "none" }}
-              onChange={(e) => manejarArchivo(e.target.files?.[0])}
+              onChange={async (e) => {
+                const archivo = e.target.files?.[0];
+                if (archivo) await manejarArchivo(archivo);
+                e.target.value = "";
+              }}
             />
 
             {error && (
