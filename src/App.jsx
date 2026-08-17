@@ -306,6 +306,11 @@ export default function PlanSalud() {
   const [usuarioLocalListo, setUsuarioLocalListo] = useState(null);
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
+  const gpsCapturadoRef = useRef({
+    lat: null,
+    lon: null,
+    accuracy: null,
+  });
 
   useEffect(() => {
     actualizarEstadoAlarmas();
@@ -1808,6 +1813,21 @@ export default function PlanSalud() {
     try {
       const perfil = await cargarPerfilSalud(sesion.user.id);
       if (perfil) {
+        gpsCapturadoRef.current = {
+          lat:
+            perfil.gps_latitude_approx == null
+              ? null
+              : Number(perfil.gps_latitude_approx),
+          lon:
+            perfil.gps_longitude_approx == null
+              ? null
+              : Number(perfil.gps_longitude_approx),
+          accuracy:
+            perfil.gps_accuracy_m == null
+              ? null
+              : Number(perfil.gps_accuracy_m),
+        };
+
         setPerfilSalud({
           birth_year: perfil.birth_year ?? "",
           sex: perfil.sex || "",
@@ -1965,6 +1985,14 @@ export default function PlanSalud() {
       const lon = Number(posicion.coords.longitude);
       const accuracy = Number(posicion.coords.accuracy || 0);
 
+      // Guardado inmediato y síncrono. Esto evita depender de la actualización
+      // asíncrona de React cuando el usuario pulsa "Guardar perfil".
+      gpsCapturadoRef.current = {
+        lat: Number(lat.toFixed(3)),
+        lon: Number(lon.toFixed(3)),
+        accuracy: Math.round(accuracy),
+      };
+
       const respuestaUbicacion = await fetch(
         `${REVERSE_GEOCODE_URL}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,
       );
@@ -1985,14 +2013,14 @@ export default function PlanSalud() {
           province: ubicacion.province || actual.province || "",
           district: ubicacion.district || actual.district || "",
           // Se guarda precisión aproximada (~100 m), no la coordenada GPS completa.
-          gps_latitude_approx: Number(lat.toFixed(3)),
-          gps_longitude_approx: Number(lon.toFixed(3)),
-          gps_accuracy_m: Math.round(accuracy),
+          gps_latitude_approx: gpsCapturadoRef.current.lat,
+          gps_longitude_approx: gpsCapturadoRef.current.lon,
+          gps_accuracy_m: gpsCapturadoRef.current.accuracy,
         }),
       );
 
       setMensajePerfil(
-        `Ubicación completada automáticamente${ubicacion.district ? `: ${ubicacion.district}` : ""}. Revísala y corrige cualquier dato antes de guardar.`,
+        `GPS detectado correctamente${ubicacion.district ? ` · ${ubicacion.district}` : ""}. La ubicación aproximada quedará guardada al pulsar "Guardar perfil".`,
       );
     } catch (e) {
       console.error("Error de ubicación", e);
@@ -2023,7 +2051,24 @@ export default function PlanSalud() {
           .map((x) => x.trim())
           .filter(Boolean);
 
-      const perfilUbicacion = completarUbicacionAdministrativa(perfilSalud);
+      const gpsCapturado = gpsCapturadoRef.current;
+      const tieneGpsCapturado =
+        gpsCapturado.lat != null &&
+        gpsCapturado.lon != null;
+
+      const perfilUbicacion = completarUbicacionAdministrativa({
+        ...perfilSalud,
+        location_source: tieneGpsCapturado ? "gps" : perfilSalud.location_source,
+        gps_latitude_approx: tieneGpsCapturado
+          ? gpsCapturado.lat
+          : perfilSalud.gps_latitude_approx,
+        gps_longitude_approx: tieneGpsCapturado
+          ? gpsCapturado.lon
+          : perfilSalud.gps_longitude_approx,
+        gps_accuracy_m: tieneGpsCapturado
+          ? gpsCapturado.accuracy
+          : perfilSalud.gps_accuracy_m,
+      });
 
       if (
         !String(perfilUbicacion.country || "").trim() ||
