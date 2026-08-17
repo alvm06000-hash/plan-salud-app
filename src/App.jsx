@@ -31,6 +31,8 @@ import {
   cargarPerfilFamiliar,
   cargarPerfilSalud,
   guardarPerfilSalud,
+  esAdministrador,
+  cargarEstadisticasAdmin,
 } from "./cloudService";
 import {
   AlertCircle,
@@ -304,6 +306,10 @@ export default function PlanSalud() {
   const [ubicacionCargando, setUbicacionCargando] = useState(false);
   const [mensajePerfil, setMensajePerfil] = useState("");
   const [usuarioLocalListo, setUsuarioLocalListo] = useState(null);
+  const [esAdminApp, setEsAdminApp] = useState(false);
+  const [adminStats, setAdminStats] = useState(null);
+  const [adminCargando, setAdminCargando] = useState(false);
+  const [adminError, setAdminError] = useState("");
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
   const gpsCapturadoRef = useRef({
@@ -1818,6 +1824,58 @@ export default function PlanSalud() {
   ];
 
 
+  useEffect(() => {
+    let activo = true;
+
+    async function comprobarAdmin() {
+      if (!sesion?.user?.id || !supabaseConfigurado) {
+        if (activo) setEsAdminApp(false);
+        return;
+      }
+
+      try {
+        const permitido = await esAdministrador();
+        if (activo) setEsAdminApp(Boolean(permitido));
+      } catch (e) {
+        console.error("No se pudo verificar acceso administrativo", e);
+        if (activo) setEsAdminApp(false);
+      }
+    }
+
+    comprobarAdmin();
+
+    return () => {
+      activo = false;
+    };
+  }, [sesion?.user?.id]);
+
+  async function actualizarEstadisticasAdmin() {
+    if (!sesion?.user?.id || !esAdminApp) return;
+
+    setAdminCargando(true);
+    setAdminError("");
+
+    try {
+      const estadisticas = await cargarEstadisticasAdmin();
+      setAdminStats(estadisticas);
+    } catch (e) {
+      console.error("No se pudieron cargar las estadísticas administrativas", e);
+      setAdminError(
+        e?.message?.toLowerCase().includes("autoriz")
+          ? "Esta cuenta no tiene permisos de administrador."
+          : "No se pudieron cargar las estadísticas. Intenta nuevamente.",
+      );
+    } finally {
+      setAdminCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    if (vista === "admin" && esAdminApp) {
+      actualizarEstadisticasAdmin();
+    }
+  }, [vista, esAdminApp, sesion?.user?.id]);
+
   async function cargarMiPerfilSalud() {
     if (!sesion?.user?.id || !supabaseConfigurado) return;
     setPerfilCargando(true);
@@ -2275,6 +2333,7 @@ export default function PlanSalud() {
                 ["recetas", "Historial"],
                 ["familia", "Familia"],
                 ["perfil", "Mi perfil de salud"],
+                ...(esAdminApp ? [["admin", "Estadísticas admin"]] : []),
               ].map(([valor, etiqueta]) => (
                 <button
                   key={valor}
