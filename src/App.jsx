@@ -3067,6 +3067,483 @@ export default function PlanSalud() {
         )}
 
 
+
+        {vista === "admin" && (
+          <section data-admin-dashboard="true">
+            <div
+              style={{
+                background: "#1E3F35",
+                borderRadius: 18,
+                padding: 18,
+                color: "#F1EEE4",
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "flex-start",
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 800,
+                      fontSize: 19,
+                    }}
+                  >
+                    <BarChart3 size={22} color="#C4915C" />
+                    Estadísticas de Plan Salud
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 5,
+                      color: "#B8C9C0",
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Panel privado con información agregada de los usuarios que
+                    aceptaron participar en estadísticas.
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={actualizarEstadisticasAdmin}
+                  disabled={adminCargando}
+                  title="Actualizar estadísticas"
+                  style={{
+                    flexShrink: 0,
+                    border: "none",
+                    borderRadius: 10,
+                    background: "rgba(255,255,255,.1)",
+                    color: "white",
+                    padding: 9,
+                  }}
+                >
+                  <RefreshCw size={18} />
+                </button>
+              </div>
+
+              {adminStats?.generated_at && (
+                <div
+                  style={{
+                    color: "#9EB5AA",
+                    fontSize: 10.5,
+                    marginTop: 8,
+                  }}
+                >
+                  Actualizado{" "}
+                  {new Date(adminStats.generated_at).toLocaleString([], {
+                    day: "2-digit",
+                    month: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </div>
+              )}
+            </div>
+
+            {!esAdminApp ? (
+              <div
+                style={{
+                  background: "#FFF3F0",
+                  border: "1px solid #E8B8AE",
+                  borderRadius: 14,
+                  padding: 16,
+                  color: "#8A4638",
+                }}
+              >
+                Esta cuenta no tiene acceso al panel administrativo.
+              </div>
+            ) : adminCargando && !adminStats ? (
+              <div
+                style={{
+                  background: "#FFFDF8",
+                  border: "1px solid #E5DFC9",
+                  borderRadius: 14,
+                  padding: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 9,
+                  color: "#5B6B60",
+                }}
+              >
+                <Loader2 size={18} />
+                Preparando estadísticas agregadas...
+              </div>
+            ) : adminError ? (
+              <div
+                style={{
+                  background: "#FFF3F0",
+                  border: "1px solid #E8B8AE",
+                  borderRadius: 14,
+                  padding: 16,
+                  color: "#8A4638",
+                }}
+              >
+                {adminError}
+              </div>
+            ) : adminStats ? (
+              (() => {
+                const resumen = adminStats.summary || {};
+                const tomadas = Number(resumen.doses_taken || 0);
+                const omitidas = Number(resumen.doses_omitted || 0);
+                const adherencia = Number(resumen.adherence_percent || 0);
+
+                const maximo = (items = []) =>
+                  Math.max(1, ...items.map((item) => Number(item.count || 0)));
+
+                const ranking = (
+                  titulo,
+                  icono,
+                  items = [],
+                  detalle = "usuarios",
+                ) => {
+                  const max = maximo(items);
+
+                  return (
+                    <div
+                      style={{
+                        background: "#FFFDF8",
+                        border: "1px solid #E5DFC9",
+                        borderRadius: 15,
+                        padding: 15,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 7,
+                          color: "#1E3F35",
+                          fontWeight: 800,
+                          marginBottom: 11,
+                        }}
+                      >
+                        {icono}
+                        {titulo}
+                      </div>
+
+                      {items.length === 0 ? (
+                        <div
+                          style={{
+                            color: "#8A9A90",
+                            fontSize: 12,
+                          }}
+                        >
+                          Aún no hay datos suficientes.
+                        </div>
+                      ) : (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {items.map((item) => {
+                            const count = Number(item.count || 0);
+                            const ancho = Math.max(
+                              4,
+                              Math.round((count / max) * 100),
+                            );
+
+                            return (
+                              <div key={`${titulo}-${item.label}`}>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    gap: 8,
+                                    fontSize: 11.5,
+                                    color: "#4A5C53",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                      maxWidth: "72%",
+                                    }}
+                                  >
+                                    {item.label || "Sin dato"}
+                                  </span>
+
+                                  <strong>
+                                    {count} {detalle}
+                                  </strong>
+                                </div>
+
+                                <div
+                                  style={{
+                                    marginTop: 4,
+                                    height: 8,
+                                    borderRadius: 999,
+                                    background: "#E7E8E1",
+                                    overflow: "hidden",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      height: "100%",
+                                      width: `${ancho}%`,
+                                      borderRadius: 999,
+                                      background: "#3A8560",
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0,1fr))",
+                        gap: 10,
+                        marginBottom: 14,
+                      }}
+                    >
+                      {[
+                        [
+                          "Perfiles con consentimiento",
+                          resumen.consenting_profiles || 0,
+                          <Users size={17} />,
+                        ],
+                        [
+                          "Adherencia global",
+                          `${adherencia}%`,
+                          <Target size={17} />,
+                        ],
+                        [
+                          "Medicamentos registrados",
+                          resumen.medications_registered || 0,
+                          <Pill size={17} />,
+                        ],
+                        [
+                          "Recetas escaneadas",
+                          resumen.recipes_scanned || 0,
+                          <FileText size={17} />,
+                        ],
+                        [
+                          "Con cuidador",
+                          resumen.with_caregiver || 0,
+                          <UserPlus size={17} />,
+                        ],
+                        [
+                          "Ubicación GPS",
+                          resumen.gps_profiles || 0,
+                          <MapPin size={17} />,
+                        ],
+                      ].map(([label, value, icon]) => (
+                        <div
+                          key={label}
+                          style={{
+                            background: "#FFFDF8",
+                            border: "1px solid #E5DFC9",
+                            borderRadius: 14,
+                            padding: 13,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              alignItems: "center",
+                              color: "#6B7A70",
+                              fontSize: 10.5,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {icon}
+                            {label}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 5,
+                              color: "#1E3F35",
+                              fontFamily: "'Fraunces', serif",
+                              fontSize: 27,
+                            }}
+                          >
+                            {value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div
+                      style={{
+                        background: "#FFFDF8",
+                        border: "1px solid #E5DFC9",
+                        borderRadius: 15,
+                        padding: 15,
+                        marginBottom: 14,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 7,
+                          color: "#1E3F35",
+                          fontWeight: 800,
+                        }}
+                      >
+                        <CheckCircle2 size={18} color="#3A8560" />
+                        Cumplimiento de dosis
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+                          gap: 8,
+                          marginTop: 11,
+                        }}
+                      >
+                        {[
+                          ["Tomadas", tomadas],
+                          ["Omitidas", omitidas],
+                          ["Adherencia", `${adherencia}%`],
+                        ].map(([label, value]) => (
+                          <div
+                            key={label}
+                            style={{
+                              background: "#F3F6F2",
+                              padding: 10,
+                              borderRadius: 10,
+                              textAlign: "center",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10.5,
+                                color: "#6B7A70",
+                              }}
+                            >
+                              {label}
+                            </div>
+
+                            <div
+                              style={{
+                                marginTop: 3,
+                                color: "#1E3F35",
+                                fontWeight: 800,
+                                fontSize: 19,
+                              }}
+                            >
+                              {value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div
+                        style={{
+                          height: 12,
+                          borderRadius: 999,
+                          background: "#E7E8E1",
+                          overflow: "hidden",
+                          marginTop: 12,
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${Math.max(
+                              0,
+                              Math.min(adherencia, 100),
+                            )}%`,
+                            background: "#3A8560",
+                            borderRadius: 999,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {ranking(
+                        "Usuarios por edad",
+                        <User size={18} color="#B87333" />,
+                        adminStats.age_groups || [],
+                        "usuarios",
+                      )}
+
+                      {ranking(
+                        "Departamentos",
+                        <MapPin size={18} color="#B87333" />,
+                        adminStats.departments || [],
+                        "usuarios",
+                      )}
+
+                      {ranking(
+                        "Distritos principales",
+                        <MapPin size={18} color="#B87333" />,
+                        adminStats.districts || [],
+                        "usuarios",
+                      )}
+
+                      {ranking(
+                        "Condiciones principales",
+                        <HeartPulse size={18} color="#B87333" />,
+                        adminStats.conditions || [],
+                        "usuarios",
+                      )}
+
+                      {ranking(
+                        "Medicamentos más registrados",
+                        <Pill size={18} color="#B87333" />,
+                        adminStats.medications || [],
+                        "registros",
+                      )}
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 14,
+                        background: "#EEF4F1",
+                        border: "1px solid #D5E4DC",
+                        borderRadius: 13,
+                        padding: 13,
+                        color: "#4A5C53",
+                        fontSize: 11.5,
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      <strong>Privacidad:</strong> este panel no muestra nombres,
+                      correos, coordenadas individuales ni historias clínicas.
+                    </div>
+                  </>
+                );
+              })()
+            ) : (
+              <div
+                style={{
+                  background: "#FFFDF8",
+                  border: "1px solid #E5DFC9",
+                  borderRadius: 14,
+                  padding: 18,
+                  color: "#6B7A70",
+                }}
+              >
+                Pulsa actualizar para cargar las estadísticas.
+              </div>
+            )}
+          </section>
+        )}
+
         {vista === "perfil" && (
           <div data-v14-2-profile-view="true">
             <div
