@@ -340,3 +340,66 @@ export async function cargarPerfilFamiliar(userId) {
   return cargarPacienteCompartido(userId);
 }
 
+
+
+// ===== V14.2: Perfil de Salud + ubicación opcional =====
+export async function cargarPerfilSalud(userId) {
+  verificarCliente();
+  if (!userId) return null;
+
+  const { data, error } = await supabase
+    .from("user_health_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+export async function guardarPerfilSalud(userId, perfil) {
+  verificarCliente();
+  if (!userId) throw new Error("Usuario no identificado.");
+
+  const ahora = new Date().toISOString();
+  const payload = {
+    user_id: userId,
+    birth_year: perfil.birth_year ?? null,
+    sex: perfil.sex || null,
+    country: perfil.country || null,
+    department: perfil.department || null,
+    province: perfil.province || null,
+    district: perfil.district || null,
+    primary_condition: perfil.primary_condition || null,
+    other_conditions: Array.isArray(perfil.other_conditions)
+      ? perfil.other_conditions
+      : [],
+    allergies: Array.isArray(perfil.allergies) ? perfil.allergies : [],
+    chronic_treatment: Boolean(perfil.chronic_treatment),
+    has_caregiver: Boolean(perfil.has_caregiver),
+    health_data_consent: Boolean(perfil.health_data_consent),
+    analytics_consent: Boolean(perfil.analytics_consent),
+    location_source: perfil.location_source || "manual",
+    gps_latitude_approx:
+      perfil.gps_latitude_approx == null
+        ? null
+        : Number(perfil.gps_latitude_approx),
+    gps_longitude_approx:
+      perfil.gps_longitude_approx == null
+        ? null
+        : Number(perfil.gps_longitude_approx),
+    gps_accuracy_m:
+      perfil.gps_accuracy_m == null ? null : Number(perfil.gps_accuracy_m),
+    consent_at: perfil.health_data_consent ? ahora : null,
+    updated_at: ahora,
+  };
+
+  const { data, error } = await supabase
+    .from("user_health_profiles")
+    .upsert(payload, { onConflict: "user_id" })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
