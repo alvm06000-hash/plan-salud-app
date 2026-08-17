@@ -307,9 +307,11 @@ export default function PlanSalud() {
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
   const gpsCapturadoRef = useRef({
+    userId: null,
     lat: null,
     lon: null,
     accuracy: null,
+    capturedAt: null,
   });
 
   useEffect(() => {
@@ -350,6 +352,16 @@ export default function PlanSalud() {
       data.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    gpsCapturadoRef.current = {
+      userId: sesion?.user?.id || null,
+      lat: null,
+      lon: null,
+      accuracy: null,
+      capturedAt: null,
+    };
+  }, [sesion?.user?.id]);
 
   // Cada cuenta usa un espacio local distinto. Así dos usuarios que inician
   // sesión en el mismo teléfono no comparten medicamentos, dosis ni recetas.
@@ -1813,28 +1825,49 @@ export default function PlanSalud() {
     try {
       const perfil = await cargarPerfilSalud(sesion.user.id);
       if (perfil) {
-        gpsCapturadoRef.current = {
-          lat:
-            perfil.gps_latitude_approx == null
-              ? null
-              : Number(perfil.gps_latitude_approx),
-          lon:
-            perfil.gps_longitude_approx == null
-              ? null
-              : Number(perfil.gps_longitude_approx),
-          accuracy:
-            perfil.gps_accuracy_m == null
-              ? null
-              : Number(perfil.gps_accuracy_m),
-        };
+        const userId = sesion.user.id;
+        const gpsActual = gpsCapturadoRef.current;
+        const hayGpsFresco =
+          gpsActual.userId === userId &&
+          gpsActual.lat != null &&
+          gpsActual.lon != null &&
+          gpsActual.capturedAt != null &&
+          Date.now() - gpsActual.capturedAt < 10 * 60 * 1000;
 
-        setPerfilSalud({
+        if (!hayGpsFresco) {
+          gpsCapturadoRef.current = {
+            userId,
+            lat:
+              perfil.gps_latitude_approx == null
+                ? null
+                : Number(perfil.gps_latitude_approx),
+            lon:
+              perfil.gps_longitude_approx == null
+                ? null
+                : Number(perfil.gps_longitude_approx),
+            accuracy:
+              perfil.gps_accuracy_m == null
+                ? null
+                : Number(perfil.gps_accuracy_m),
+            capturedAt: null,
+          };
+        }
+
+        setPerfilSalud((actual) => ({
           birth_year: perfil.birth_year ?? "",
           sex: perfil.sex || "",
-          country: perfil.country || "Perú",
-          department: perfil.department || "",
-          province: perfil.province || "",
-          district: perfil.district || "",
+          country: hayGpsFresco
+            ? actual.country || perfil.country || "Perú"
+            : perfil.country || "Perú",
+          department: hayGpsFresco
+            ? actual.department || perfil.department || ""
+            : perfil.department || "",
+          province: hayGpsFresco
+            ? actual.province || perfil.province || ""
+            : perfil.province || "",
+          district: hayGpsFresco
+            ? actual.district || perfil.district || ""
+            : perfil.district || "",
           primary_condition: perfil.primary_condition || "",
           other_conditions: Array.isArray(perfil.other_conditions)
             ? perfil.other_conditions.join(", ")
@@ -1846,11 +1879,19 @@ export default function PlanSalud() {
           has_caregiver: Boolean(perfil.has_caregiver),
           health_data_consent: Boolean(perfil.health_data_consent),
           analytics_consent: Boolean(perfil.analytics_consent),
-          location_source: perfil.location_source || "manual",
-          gps_latitude_approx: perfil.gps_latitude_approx ?? null,
-          gps_longitude_approx: perfil.gps_longitude_approx ?? null,
-          gps_accuracy_m: perfil.gps_accuracy_m ?? null,
-        });
+          location_source: hayGpsFresco
+            ? "gps"
+            : perfil.location_source || "manual",
+          gps_latitude_approx: hayGpsFresco
+            ? gpsActual.lat
+            : perfil.gps_latitude_approx ?? null,
+          gps_longitude_approx: hayGpsFresco
+            ? gpsActual.lon
+            : perfil.gps_longitude_approx ?? null,
+          gps_accuracy_m: hayGpsFresco
+            ? gpsActual.accuracy
+            : perfil.gps_accuracy_m ?? null,
+        }));
       }
     } catch (e) {
       console.error("No se pudo cargar el perfil de salud", e);
@@ -1988,10 +2029,26 @@ export default function PlanSalud() {
       // Guardado inmediato y síncrono. Esto evita depender de la actualización
       // asíncrona de React cuando el usuario pulsa "Guardar perfil".
       gpsCapturadoRef.current = {
+        userId: sesion?.user?.id || null,
         lat: Number(lat.toFixed(3)),
         lon: Number(lon.toFixed(3)),
         accuracy: Math.round(accuracy),
+        capturedAt: Date.now(),
       };
+
+      // Reflejar inmediatamente que el GPS ya fue capturado, antes de llamar
+      // al servicio que convierte coordenadas en distrito/provincia.
+      setPerfilSalud((actual) => ({
+        ...actual,
+        location_source: "gps",
+        gps_latitude_approx: gpsCapturadoRef.current.lat,
+        gps_longitude_approx: gpsCapturadoRef.current.lon,
+        gps_accuracy_m: gpsCapturadoRef.current.accuracy,
+      }));
+
+      setMensajePerfil(
+        `✓ GPS capturado: ${gpsCapturadoRef.current.lat}, ${gpsCapturadoRef.current.lon}. Identificando ubicación...`,
+      );
 
       const respuestaUbicacion = await fetch(
         `${REVERSE_GEOCODE_URL}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,
@@ -2053,6 +2110,7 @@ export default function PlanSalud() {
 
       const gpsCapturado = gpsCapturadoRef.current;
       const tieneGpsCapturado =
+        gpsCapturado.userId === sesion.user.id &&
         gpsCapturado.lat != null &&
         gpsCapturado.lon != null;
 
@@ -2085,7 +2143,7 @@ export default function PlanSalud() {
 
       setPerfilSalud(perfilUbicacion);
 
-      await guardarPerfilSalud(sesion.user.id, {
+      const perfilGuardado = await guardarPerfilSalud(sesion.user.id, {
         birth_year: perfilUbicacion.birth_year
           ? Number(perfilUbicacion.birth_year)
           : null,
@@ -2106,7 +2164,23 @@ export default function PlanSalud() {
         gps_longitude_approx: perfilUbicacion.gps_longitude_approx,
         gps_accuracy_m: perfilUbicacion.gps_accuracy_m,
       });
-      setMensajePerfil("Perfil de salud guardado correctamente.");
+
+      if (
+        tieneGpsCapturado &&
+        (perfilGuardado?.location_source !== "gps" ||
+          perfilGuardado?.gps_latitude_approx == null ||
+          perfilGuardado?.gps_longitude_approx == null)
+      ) {
+        throw new Error(
+          "El perfil se guardó, pero Supabase no devolvió los datos GPS. Vuelve a pulsar “Usar mi ubicación actual” y guarda nuevamente.",
+        );
+      }
+
+      setMensajePerfil(
+        tieneGpsCapturado
+          ? "Perfil guardado correctamente con ubicación GPS."
+          : "Perfil de salud guardado correctamente.",
+      );
     } catch (e) {
       console.error("No se pudo guardar el perfil", e);
       setMensajePerfil(e?.message || "No se pudo guardar el perfil.");
@@ -3062,7 +3136,7 @@ export default function PlanSalud() {
 
                     <button
                       type="button"
-                      disabled={ubicacionCargando}
+                      disabled={ubicacionCargando || perfilCargando}
                       onClick={detectarUbicacionPerfil}
                       style={{
                         marginTop: 10,
